@@ -113,8 +113,12 @@ Environment variables:
 │       ├── UploadForm.svelte
 │       ├── JobStatus.svelte
 │       └── JBrowseViewer.svelte
-├── probe_designer.py        # Main pipeline script
-└── docker-compose.yml
+├── bin/                      # Binary executables
+├── core/                     # Core utilities
+├── docs/                     # Documentation
+├── probe_designer.py         # Main pipeline script
+├── docker-compose.yml
+└── requirements.txt
 ```
 
 ## Output Files
