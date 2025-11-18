@@ -1,0 +1,22 @@
+/* Minimal CSS (Tailwind removed) */
+html, body, #app { height: 100%; margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
+#app { display:flex; align-items:center; justify-content:center; padding:2rem; }
+.btn { background:#0ea5e9; color:white; padding:0.5rem 1rem; border-radius:6px; }
+.btn:disabled { opacity:0.6 }
+.text-red-600 { color:#dc2626 }
+.text-blue-600 { color:#2563eb }
+.mt-1 { margin-top:0.25rem }
+.mt-2 { margin-top:0.5rem }
+.mt-4 { margin-top:1rem }
+.mt-6 { margin-top:1.5rem }
+.p-4 { padding:1rem }
+.border { border:1px solid #e5e7eb }
+.rounded { border-radius:6px }
+.font-medium { font-weight:500 }
+.font-bold { font-weight:700 }
+.w-full { width:100% }
+.max-w-3xl { max-width:48rem }
+.space-y-4 > * + * { margin-top:1rem }
+.grid { display:grid }
+.grid-cols-3 { grid-template-columns: repeat(3, 1fr) }
+.gap-2 { gap:0.5rem }

@@ -1,0 +1,32 @@
+:80 {
+    log {
+        output stdout
+        format console
+    }
+
+    request_body {
+        max_size 1GB
+    }
+
+    # API routes - use 'handle' not 'handle_path'
+    handle /jobs* {
+        reverse_proxy api:8002
+    }
+
+    handle /api* {
+        reverse_proxy api:8002
+    }
+
+    # Static files
+    handle {
+        root * /usr/share/caddy
+        
+        @static {
+            path *.js *.css *.png *.jpg *.jpeg *.gif *.ico *.svg *.woff *.woff2 *.ttf *.eot
+        }
+        header @static Cache-Control "public, immutable, max-age=31536000"
+        
+        try_files {path} /index.html
+        file_server
+    }
+}

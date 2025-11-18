@@ -1,0 +1,65 @@
+services:
+  redis:
+    image: redis:7
+    container_name: redis
+    networks:
+      - internal_net
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: probe-designer-api
+    expose:
+      - "8002"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs
+      - ./gene_sequences:/app/gene_sequences
+      - ./probe_sequences:/app/probe_sequences
+    networks:
+      - internal_net
+    command: uvicorn backend.main_app:app --host 0.0.0.0 --port 8002 --reload
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: probe-designer-worker
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    depends_on:
+      - redis
+      - api
+    volumes:
+      - ./data:/app/data
+      - ./outputs:/app/outputs              
+      - ./gene_sequences:/app/gene_sequences
+      - ./probe_sequences:/app/probe_sequences 
+    networks:
+      - internal_net
+    command: celery -A backend.celery_worker worker --loglevel=info
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: probe-designer-frontend
+    ports:
+      - "4000:80"
+    volumes:
+    - ./frontend/src:/app/src
+    depends_on:
+      - api
+    networks:
+      - internal_net
+
+networks:
+  internal_net:
+    driver: bridge
