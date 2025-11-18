@@ -39,6 +39,9 @@ Access the application:
 ### Backend
 
 ```bash
+# Create and activate a new conda environment (recommended)
+conda create -n probe-designer python=3.11 -y
+conda activate probe-designer
 # Install dependencies
 pip install -r requirements.txt
 
@@ -53,6 +56,7 @@ uvicorn backend.main_app:app --host 0.0.0.0 --port 8000 --reload
 
 ```bash
 cd frontend
+conda activate probe-designer
 npm install
 npm run dev
 ```
