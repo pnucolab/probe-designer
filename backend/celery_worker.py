@@ -79,7 +79,7 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
         
         logger.info("Sequence content length: %d characters", len(sequence_content))
         
-        pipeline_script = ROOT / "simple_pipeline.py"
+        pipeline_script = ROOT / "probe_designer.py"
         
         cmd = [
             sys.executable,
