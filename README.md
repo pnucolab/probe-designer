@@ -52,6 +52,9 @@ celery -A backend.celery_worker worker --loglevel=info
 uvicorn backend.main_app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
+> **Note:** The first run may take a while because the reference FASTA file and annotation 
+file for the host are downloaded automatically. On subsequent runs, the tool will use the previously downloaded files unless new releases are available.
+
 ### Frontend
 
 ```bash
