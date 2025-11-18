@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY core/ ./core/
 COPY backend/ ./backend/
-COPY simple_pipeline.py ./
+COPY probe_designer.py ./
 COPY bin/ ./bin/
 
 EXPOSE 8002
