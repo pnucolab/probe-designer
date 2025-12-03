@@ -40,7 +40,7 @@ frontend/.svelte-kit/
 # Environment
 .env
 .env.local
-
+delete_outputs.py
 # Logs
 *.log
 logs/
@@ -49,9 +49,7 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Binaries
-bin/
-core/
+
 
 # Output
 output/

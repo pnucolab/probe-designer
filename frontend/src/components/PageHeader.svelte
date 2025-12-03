@@ -4,21 +4,22 @@
 
 <div style="display:flex; flex-direction:column; gap:1rem;">
   <h1 style="margin:0; font-size:2rem; font-weight:700; color:#1f2937;">
-    Microbial-probe designer
+    Microbial Probe Designer
   </h1>
   
   <p style="line-height:1.6; color:#4b5563; margin:0;">
-    Microbiome genome assemblies are often biased by contamination 
-    from the host genome. During sequencing, host and microbial DNA 
-    are extracted together, and if host reads aren't properly filtered 
-    before assembly, fragments of host DNA can be incorporated into 
-    microbial contigs. This leads to chimeric assemblies where the supposed 
-    microbial genome includes host sequences, distorting gene content. 
-    When designing probes to detect microbial transcripts in host tissues, 
-    one major problem is sequence similarity between microbial genes and host 
-    transcripts. Even partial homology can lead a probe to bind to host RNA, 
-    producing false positives. So this tool is designed to filter probes that have
-    off-target with the host genome.
+    Spatial transcriptomics using fluorescence in situ hybridization 
+    enables visualization of microbial gene expression directly within host 
+    tissues, providing critical insights into host-microbe interactions. 
+    However, a major technical challenge arises from sequence similarity 
+    between microbial genes and host transcripts. When designing probes to 
+    target microbial transcripts, even partial sequence homology can cause 
+    probes to cross-hybridize with host RNA, producing false-positive signals 
+    that confound biological interpretation. This tool systematically validates 
+    microbial probe specificity against host transcriptomes through mismatch-tolerant 
+    alignment, identifies probes with potential host cross-hybridization, and ranks safe 
+    probes by thermodynamic quality—enabling researchers to design validated probes that minimize 
+    host-derived artifacts in FISH experiments.
   </p>
 
   {#if showJobResults}

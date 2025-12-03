@@ -4,6 +4,7 @@ services:
     container_name: probe-designer-redis
     networks:
       - internal_net
+    restart: unless-stopped
 
   api:
     build:
@@ -25,6 +26,7 @@ services:
     networks:
       - internal_net
     command: uvicorn backend.main_app:app --host 0.0.0.0 --port 8002 --reload
+    restart: unless-stopped
 
   worker:
     build:
@@ -45,6 +47,7 @@ services:
     networks:
       - internal_net
     command: celery -A backend.celery_worker worker --loglevel=info
+    restart: unless-stopped
 
   frontend:
     build:
@@ -59,6 +62,7 @@ services:
       - api
     networks:
       - internal_net
+    restart: unless-stopped
 
 networks:
   internal_net:

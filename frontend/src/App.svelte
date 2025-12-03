@@ -82,7 +82,7 @@
 
   {:else if currentView === 'about'}
     <div class="section">
-      <h1 class="heading-1">About Microbial-probe designer</h1>
+      <h1 class="heading-1">About Microbial Probe Designer</h1>
       
       <section>
         <h2 class="heading-2">Overview</h2>

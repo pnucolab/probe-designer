@@ -134,25 +134,24 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                 parts = line.strip().split('\t')
                 if len(parts) < 11:
                     continue
-                
-                qname = parts[0]  
-                if probe_id_filter:
-                    record_base = qname.split('|')[0].strip()
-                    record_numeric = re.search(r'probe_(\d+)', qname)
-                    record_num = record_numeric.group(1) if record_numeric else None
-                    matches = (
-                        qname == probe_id_filter or
-                        record_base == base_probe_id or
-                        (probe_num and record_num and probe_num == record_num)
-                    )
-                    if not matches:
-                            continue
 
+                qname = parts[0]
                 flag = int(parts[1])
-                rname = parts[2]  
-                pos = int(parts[3])  
-                cigar = parts[5]  
-                seq = parts[9]  
+                rname = parts[2]
+
+                # Detect format
+                try:
+                    pos = int(parts[3])
+                    # Standard SAM: no gene_id
+                    gene_id = None
+                    cigar = parts[5]
+                    seq = parts[9]
+                except ValueError:
+                    # Annotated SAM: has gene_id in column 3
+                    gene_id = parts[3]
+                    pos = int(parts[4])
+                    cigar = parts[6]  # Shifted by 1
+                    seq = parts[10]  
                 
                 if seq == '*':
                     if qname in sequence_cache:
@@ -168,11 +167,14 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                 
                 nm = None
                 md = None
+                species = None
                 for field in parts[11:]:
                     if field.startswith('NM:i:'):
                         nm = int(field.split(':')[2])
                     elif field.startswith('MD:Z:'):
                         md = field.split(':')[2]
+                    elif field.startswith('SP:Z:'):  
+                        species = field.split(':')[2]
                 
                 if nm is None or md is None:
                     continue
@@ -189,9 +191,11 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                     'probe_id': qname,
                     'sequence': formatted_seq,
                     'target_transcript': rname,
+                    'gene_id': gene_id,
                     'mismatches': nm,
                     'position': pos,
-                    'strand': strand
+                    'strand': strand,
+                    'species': species
                 })
                 
                 if limit and len(alignments) >= limit:
@@ -211,11 +215,12 @@ if __name__ == "__main__":
         alignments = parse_sam_file(sam_file, limit=10)
         
         print("\n" + "="*100)
-        print(f"{'Probe ID':<15} {'Sequence':<25} {'Target':<25} {'MM':<5} {'Pos':<8} {'Strand':<6}")
+        print(f"{'Probe ID':<15} {'Sequence':<25} {'Target':<20} {'Gene':<15} {'MM':<5} {'Pos':<8} {'Strand':<6}")  
         print("="*100)
         
         for aln in alignments:
-            print(f"{aln['probe_id']:<15} {aln['sequence']:<25} {aln['target_transcript']:<25} "
-                  f"{aln['mismatches']:<5} {aln['position']:<8} {aln['strand']:<6}")
+            print(f"{aln['probe_id']:<15} {aln['sequence']:<25} {aln['target_transcript']:<20} "
+            f"{(aln.get('gene_id') or '-'):<15} {aln['mismatches']:<5} {aln['position']:<8} {aln['strand']:<6}")  
+
         
         print("="*100)

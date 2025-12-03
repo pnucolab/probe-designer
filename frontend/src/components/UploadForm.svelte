@@ -157,8 +157,14 @@ GCCGCCTTCTTCGGCATATC`;
       <div>
         <label for="species" class="label-text">Host Organism</label>
         <select id="species" bind:value={species} class="select-input">
-          <option value="human">Human</option>
-          <option value="mouse">Mouse</option>
+          <option value="human">Human Transcriptome</option>
+          <option value="gut-microbe">Human Gut Microbiome</option>
+          <option value="human-oral-microbiome">Human Oral Microbiome</option>
+          <option value="human-skin-microbiome">Human Skin Microbiome</option>
+          <option value="human-vaginal-microbiome">Human Vaginal Microbiome</option>
+          <option value="mouse-gut-microbiome">Mouse Gut Microbiome</option>
+          <option value="mouse">Mouse Transcriptome</option>
+
         </select>
       </div>
 

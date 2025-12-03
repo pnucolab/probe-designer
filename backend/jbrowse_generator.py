@@ -9,6 +9,11 @@ import re
 from pathlib import Path
 from typing import List, Dict, Optional
 import logging
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
+from probe_classifier import classify_probes_from_sam
+
 
 logger = logging.getLogger(__name__)
 
@@ -108,32 +113,32 @@ class JBrowseFileGenerator:
         candidate_probes_file: Path,
         aligned_sam_file: Path
     ) -> List[Dict]:
+        """Parse probe regions and classify risk using shared classifier."""
         
-        aligned_probes = {}  
+        # Import shared classifier
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
         
+        # Detect if this is microbiome data by checking for SP:Z: tags
+        is_microbiome = False
         if aligned_sam_file.exists():
-            nm_pattern = re.compile(r'NM:i:(\d+)')
             with open(aligned_sam_file, 'r', encoding='utf-8') as f:
                 for line in f:
                     if line.startswith('@'):
                         continue
-                    
-                    parts = line.strip().split('\t')
-                    if len(parts) < 11:
-                        continue
-                    
-                    probe_id_full = parts[0]
-                    probe_id_match = re.search(r'probe_\d+', probe_id_full)
-                    if not probe_id_match:
-                        continue
-                    
-                    probe_id = probe_id_match.group(0)
-                    nm_match = nm_pattern.search(line)
-                    if nm_match:
-                        nm = int(nm_match.group(1))
-                        if probe_id not in aligned_probes or nm < aligned_probes[probe_id]:
-                            aligned_probes[probe_id] = nm
-     
+                    if 'SP:Z:' in line and 'SP:Z:Unknown' not in line:
+                        is_microbiome = True
+                        break
+        
+        # Get probe classifications from SAM file
+        probe_classifications = {}
+        if aligned_sam_file.exists():
+            probe_classifications = classify_probes_from_sam(
+                str(aligned_sam_file), 
+                is_microbiome=is_microbiome
+            )
+        
+        # Parse probe regions from FASTA
         probe_regions = []
         
         with open(candidate_probes_file, 'r', encoding='utf-8') as f:
@@ -148,15 +153,16 @@ class JBrowseFileGenerator:
                         probe_id = probe_id_match.group(0)
                         start = int(start_match.group(1))
                         end = int(end_match.group(1))
-                        if probe_id in aligned_probes:
-                            mismatches = aligned_probes[probe_id]
-                            if mismatches <= 1:
-                                status = 'high_risk'  
-                            else:  
-                                status = 'medium_risk'  
+                        
+                        # Get classification from shared classifier
+                        if probe_id in probe_classifications:
+                            classification = probe_classifications[probe_id]
+                            status = classification['status']
+                            mismatches = classification['min_mismatches']
                         else:
+                            # Probe not in SAM = no alignments = safe
+                            status = 'safe'
                             mismatches = None
-                            status = 'safe'  
                         
                         probe_regions.append({
                             "probe_id": probe_id,
@@ -252,7 +258,7 @@ class JBrowseFileGenerator:
             has_header = False
             with open(sam_path, 'r', encoding='utf-8') as f:
                 first_line = f.readline()
-                has_header = first_line.startswith('@HD') or first_line.startswith('@SQ')
+                has_header = first_line.startswith('@')
             
             if not has_header:
                 logger.warning("SAM file missing header, attempting to rebuild")
@@ -422,12 +428,14 @@ def generate_jbrowse_files(
         )
         
         candidate_probes_file = Path(output_dir) / "candidate_probes.fa"
-        aligned_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
-        
+        aligned_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
+        classification_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
+        bam_conversion_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
+
         logger.info("Parsing probe regions and risk classifications")
         probe_regions = generator.parse_probe_regions_from_fasta(
             candidate_probes_file,
-            aligned_sam_file
+            classification_sam_file
         )
         
         logger.info(f"Generating probes GFF3 with {len(probe_regions)} probes")
@@ -438,10 +446,10 @@ def generate_jbrowse_files(
         
         bam_file = None
 
-        if aligned_sam_file.exists():
+        if bam_conversion_sam_file.exists():
             logger.info("Converting filtered_probe_alignments.sam to BAM")
             try:
-                bam_file = generator.convert_sam_to_indexed_bam(aligned_sam_file)
+                bam_file = generator.convert_sam_to_indexed_bam(bam_conversion_sam_file)
                 logger.info(f"Successfully created filtered BAM: {bam_file}")
             except Exception as e:
                 logger.warning(f"Failed to convert filtered_probe_alignments.sam: {e}")

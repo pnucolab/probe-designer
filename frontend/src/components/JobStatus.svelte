@@ -28,7 +28,34 @@
   let isSearching = false;
   let searchError = null;
   let inputType = null;
-  
+  let safeProbes = [];
+  let filteredSafeProbes = [];
+  let showSafeProbes = false;
+  let loadingSafeProbes = false;
+  let safeProbeSearch = '';
+  let safeProbeMinScore = null;
+  let safeProbeQuality = 'all';
+  let safeProbesPage = 1;
+  let safeProbesPageSize = 25;
+  let safeProbesPageSizeOptions = [10, 25, 50, 100];
+  let microbiomeSelfAligned = [];
+  let showMicrobiomeSelfAligned = false;
+  let loadingMicrobiomeSelfAligned = false;
+  let microbiomeCurrentPage = 1;
+  let microbiomeRowsPerPage = 10;
+
+  $: paginatedProbes = filteredSafeProbes.slice(
+    (safeProbesPage - 1) * safeProbesPageSize,
+    safeProbesPage * safeProbesPageSize
+  );
+  $: safeProbesTotalPages = Math.ceil(filteredSafeProbes.length / safeProbesPageSize) || 1;
+  $: isPrevDisabled = safeProbesPage <= 1;
+  $: isNextDisabled = safeProbesPage >= safeProbesTotalPages;
+  $: alignmentsPrevDisabled = currentPage <= 1;
+  $: alignmentsNextDisabled = currentPage >= totalPages;
+  $: safeProbesPageNumbers = getSafeProbesPageNumbers(safeProbesPage, safeProbesTotalPages);
+  $: pageNumbers = getPageNumbers(currentPage, totalPages);
+
   function formatBytes(bytes) {
     if (!bytes && bytes !== 0) return '-';
     if (bytes === 0) return '0 B';
@@ -68,9 +95,11 @@
       
       currentGroup.alignments.push({
         target_transcript: aln.target_transcript,
+        gene_id: aln.gene_id,
         mismatches: aln.mismatches,
         position: aln.position,
-        strand: aln.strand
+        strand: aln.strand,
+        species: aln.species
       });
     }
     
@@ -138,7 +167,7 @@
     }
   }
 
-    async function handleFeatureClick(featureData) {
+  async function handleFeatureClick(featureData) {
     console.log('Feature clicked:', featureData);
     
     if (expandedProbe?.probe_id === featureData.probe_id) {
@@ -146,19 +175,17 @@
       expandedProbeAlignments = [];
       return;
     }
-    
-    // Fetch the probe sequence from candidate probes file
+  
     let probeSequence = null;
     try {
       const baseProbeId = featureData.probe_id.split('|')[0].trim();
       
       console.log('Available files:', files.map(f => f.filename));
       
-      // Find all .fa or .fasta files that might contain probes
       const probeFiles = files.filter(f => {
         const name = f.filename.toLowerCase();
         return (name.endsWith('.fa') || name.endsWith('.fasta')) && 
-               (name.includes('probe') || name.includes('candidate'));
+              (name.includes('probe') || name.includes('candidate'));
       });
       
       console.log('Probe files to try:', probeFiles.map(f => f.filename));
@@ -177,7 +204,6 @@
                 const headerBase = header.split('|')[0].trim();
                 
                 if (header.trim() === featureData.probe_id || headerBase === baseProbeId) {
-                  // Get the sequence on the next line
                   if (i + 1 < lines.length) {
                     probeSequence = lines[i + 1].trim();
                     console.log(`✓ Found probe sequence in ${file.filename}:`, probeSequence);
@@ -208,6 +234,50 @@
     
     try {
       if (featureData.status === 'safe') {
+   
+        console.log('Fetching scoring data for safe probe:', featureData.probe_id);
+        
+        try {
+          const scoresRes = await fetch(`/jobs/${jobId}/download/non_aligned_probes_scores.txt`);
+          if (scoresRes.ok) {
+            const scoresText = await scoresRes.text();
+            const lines = scoresText.split('\n');
+            const baseProbeId = featureData.probe_id.split('|')[0].trim();
+            
+            for (const line of lines) {
+              if (line.includes(baseProbeId)) {
+                const parts = line.trim().split(/\s+/);
+                
+                if (parts.length >= 11) {
+                  const scoringData = {
+                    rank: parts[0],
+                    probe_id: parts[1],
+                    sequence: parts[2],
+                    score: parseFloat(parts[3]),
+                    tm: parseFloat(parts[4]),
+                    gc_content: parseFloat(parts[5]),
+                    length: parseInt(parts[6]),
+                    complexity: parseFloat(parts[7]),
+                    sec_struct: parseFloat(parts[8]),
+                    homopoly: parts[9],
+                    status: parts[10],
+                    rejected: parts[11]
+                  };
+                  expandedProbeAlignments = [{
+                    type: 'scoring_data',
+                    data: scoringData
+                  }];
+                  
+                  console.log('Found scoring data:', scoringData);
+                  break;
+                }
+              }
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch scoring data:', e);
+        }
+        
         loadingProbeAlignments = false;
         return;
       }
@@ -215,15 +285,42 @@
       const allProbeAlignments = await fetchAllProbeAlignments(featureData.probe_id);
       
       if (allProbeAlignments.length > 0) {
-        expandedProbeAlignments = allProbeAlignments.map((aln) => ({
-          target_transcript: aln.target_transcript,
-          mismatches: aln.mismatches,
-          position: aln.position,
-          strand: aln.strand,
-          sequence: aln.sequence,
-          gc_content: calculateGC(aln.sequence)
-        }));
-      }
+  // For microbiome: check if only self-alignment
+  const isMicrobiome = info?.species === 'gut-microbe' || 
+                       info?.species === 'human-oral-microbiome' || 
+                       info?.species === 'human-skin-microbiome' || 
+                       info?.species === 'human-vaginal-microbiome' || 
+                       info?.species === 'mouse-gut-microbiome';
+  
+  if (isMicrobiome) {
+    const perfectMatches = allProbeAlignments.filter(aln => aln.mismatches === 0);
+    if (perfectMatches.length === 1 && allProbeAlignments.length === 1) {
+      expandedProbeAlignments = []; // Safe - only self-alignment
+    } else {
+      expandedProbeAlignments = allProbeAlignments.map((aln) => ({
+        target_transcript: aln.target_transcript,
+        gene_id: aln.gene_id,
+        mismatches: aln.mismatches,
+        position: aln.position,
+        strand: aln.strand,
+        species: aln.species,
+        sequence: aln.sequence,
+        gc_content: calculateGC(aln.sequence)
+      }));
+    }
+  } else {
+    expandedProbeAlignments = allProbeAlignments.map((aln) => ({
+      target_transcript: aln.target_transcript,
+      gene_id: aln.gene_id,
+      mismatches: aln.mismatches,
+      position: aln.position,
+      strand: aln.strand,
+      species: aln.species,
+      sequence: aln.sequence,
+      gc_content: calculateGC(aln.sequence)
+    }));
+  }
+}
     } catch (error) {
       console.error('Error in handleFeatureClick:', error);
     } finally {
@@ -252,15 +349,16 @@
         status: 'unknown' 
       };
       
-      console.log('🔄 Fetching alignments...');
+      console.log('Fetching alignments...');
       const allProbeAlignments = await fetchAllProbeAlignments(searchProbeId);
       
-      console.log('📊 Fetch complete. Alignments found:', allProbeAlignments.length);
+      console.log('Fetch complete. Alignments found:', allProbeAlignments.length);
       
       if (allProbeAlignments.length > 0) {
         searchedAlignments = allProbeAlignments.map((aln, idx) => {
           const processed = {
             target_transcript: aln.target_transcript,
+            gene_id: aln.gene_id,
             mismatches: aln.mismatches,
             position: aln.position,
             strand: aln.strand,
@@ -286,7 +384,7 @@
         console.log('✓ Safe probe - no alignments found');
       }
     } catch (error) {
-      console.error('❌ ERROR in searchProbeById:', error);
+      console.error('ERROR in searchProbeById:', error);
       searchError = 'Failed to fetch alignments: ' + error.message;
       searchedProbe = null;
     } finally {
@@ -306,7 +404,246 @@
     searchError = null;
     loadingProgress = { current: 0, total: 0, percent: 0 };
   }
-  
+  async function fetchSafeProbes() {
+    loadingSafeProbes = true;
+    try {
+      const res = await fetch(`/jobs/${jobId}/download/non_aligned_probes_scores.txt`);
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.split('\n');
+        
+        let dataStart = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].trim().startsWith('-'.repeat(10))) {
+            dataStart = i + 1;
+            break;
+          }
+        }
+       
+        const probes = [];
+        for (let i = dataStart; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line || line.startsWith('=')) continue;
+          
+          
+          const parts = line.split(/\s+/);
+          
+          console.log('Parsing line:', line);
+          console.log('Parts:', parts);
+          
+          if (parts.length >= 11) {
+            const probe = {
+              rank: parseInt(parts[0]),
+              probe_id: parts[1],
+              sequence: parts[2],
+              score: parseFloat(parts[3]),
+              tm: parseFloat(parts[4]),
+              gc_content: parseFloat(parts[5]),
+              length: parseInt(parts[6]),
+              complexity: parseFloat(parts[7]),
+              sec_struct: parseFloat(parts[8]),
+              homopolymer: parts[9],
+              status: parts[10]
+            };
+            
+            probes.push(probe);
+          }
+        }
+        
+        console.log('Total probes parsed:', probes.length);
+        console.log('Sample probe:', probes[0]);
+        
+        safeProbes = probes;
+        filteredSafeProbes = [...safeProbes];
+      }
+    } catch (e) {
+      console.error('Failed to fetch safe probes:', e);
+    } finally {
+      loadingSafeProbes = false;
+    }
+  }
+
+  function filterSafeProbes() {
+    filteredSafeProbes = safeProbes.filter(probe => {
+      if (safeProbeSearch && !probe.probe_id.toLowerCase().includes(safeProbeSearch.toLowerCase())) {
+        return false;
+      } 
+      if (safeProbeMinScore !== null && safeProbeMinScore !== '' && probe.score < parseFloat(safeProbeMinScore)) {
+        return false;
+      }
+      if (safeProbeQuality !== 'all' && probe.status.toLowerCase() !== safeProbeQuality.toLowerCase()) {
+        return false;
+      }
+      
+      return true;
+    });
+    safeProbesPage = 1;
+  }
+
+  async function fetchMicrobiomeSelfAligned() {
+    loadingMicrobiomeSelfAligned = true;
+    try {
+      const res = await fetch(`/jobs/${jobId}/download/filtered_probe_alignments_annotated.sam`);
+      if (res.ok) {
+        const text = await res.text();
+        const lines = text.split('\n');
+        
+        const probeMap = new Map();
+        
+        for (const line of lines) {
+          if (line.startsWith('@')) continue;
+          const parts = line.split('\t');
+          if (parts.length < 11) continue;
+          
+          const probeId = parts[0].split('|')[0];
+          const target = parts[2];
+          const position = parseInt(parts[3]);
+          const strand = (parseInt(parts[1]) & 16) ? '-' : '+';
+          const sequence = parts[9];
+          const species = parts.find(p => p.startsWith('SP:Z:'))?.substring(5) || 'Unknown';
+          const nmMatch = line.match(/NM:i:(\d+)/);
+          const mismatches = nmMatch ? parseInt(nmMatch[1]) : 999;
+          
+          const gc = sequence ? ((sequence.match(/[GC]/g) || []).length / sequence.length * 100).toFixed(1) + '%' : '-';
+          
+          if (!probeMap.has(probeId)) {
+            probeMap.set(probeId, { 
+              probe_id: probeId, 
+              target,
+              species, 
+              mismatches, 
+              position,
+              strand,
+              sequence,
+              gc_content: gc,
+              count: 0 
+            });
+          }
+          probeMap.get(probeId).count++;
+        }
+        
+        microbiomeSelfAligned = Array.from(probeMap.values())
+          .filter(p => p.count === 1 && p.mismatches <= 2 && p.species !== 'Unknown')
+          .sort((a, b) => a.probe_id.localeCompare(b.probe_id));
+        
+      }
+    } catch (e) {
+      console.error('Failed to fetch microbiome self-aligned probes:', e);
+    } finally {
+      loadingMicrobiomeSelfAligned = false;
+    }
+  }
+
+  async function toggleMicrobiomeSelfAligned() {
+    showMicrobiomeSelfAligned = !showMicrobiomeSelfAligned;
+    if (showMicrobiomeSelfAligned && microbiomeSelfAligned.length === 0) {
+      await fetchMicrobiomeSelfAligned();
+    }
+  }
+
+  function handleSafeProbeSearchInput(event) {
+    safeProbeSearch = event.target.value;
+    filterSafeProbes();
+  }
+
+  function handleMinScoreChange(event) {
+    const value = event.target.value.trim();
+    if (value === '') {
+      safeProbeMinScore = null;
+    } else {
+      const parsed = parseFloat(value);
+      safeProbeMinScore = isNaN(parsed) ? null : parsed;
+    }
+    
+    console.log('Min score changed to:', safeProbeMinScore); 
+    filterSafeProbes();
+  }
+
+  function handleQualityFilterChange(event) {
+    safeProbeQuality = event.target.value;
+    filterSafeProbes();
+  }
+
+  async function toggleSafeProbes() {
+    showSafeProbes = !showSafeProbes;
+    if (showSafeProbes && safeProbes.length === 0) {
+      await fetchSafeProbes();
+    }
+  }
+  function getSafeProbesPageData() {
+    const startIdx = (safeProbesPage - 1) * safeProbesPageSize;
+    const endIdx = startIdx + safeProbesPageSize;
+    return filteredSafeProbes.slice(startIdx, endIdx);
+  }
+
+  function getSafeProbesTotalPages() {
+    return Math.ceil(filteredSafeProbes.length / safeProbesPageSize) || 1;
+  }
+
+  function goToSafeProbePage(page) {
+    const totalPages = getSafeProbesTotalPages();
+    if (page >= 1 && page <= totalPages) {
+      safeProbesPage = page;
+    }
+  }
+
+  function nextSafeProbePage() {
+    const totalPages = getSafeProbesTotalPages();
+    if (safeProbesPage < totalPages) {
+      safeProbesPage++;
+    }
+  }
+
+  function prevSafeProbePage() {
+    if (safeProbesPage > 1) {
+      safeProbesPage--;
+    }
+  }
+
+  function getSafeProbesPageNumbers(currentPage, totalPages) {
+    const pages = [];
+    const maxVisible = 5;
+    
+    if (totalPages <= maxVisible) {
+      for (let i = 1; i <= totalPages; i++) {
+        pages.push(i);
+      }
+      return pages;
+    }
+    
+    pages.push(1);
+    
+    if (currentPage <= 3) {
+      for (let i = 2; i <= 4; i++) {
+        pages.push(i);
+      }
+      pages.push('...');
+      pages.push(totalPages);
+      
+    } else if (currentPage >= totalPages - 2) {
+      pages.push('...');
+      for (let i = totalPages - 3; i <= totalPages; i++) {
+        pages.push(i);
+      }
+      
+    } else {
+      pages.push('...');
+      pages.push(currentPage - 1);
+      pages.push(currentPage);
+      pages.push(currentPage + 1);
+      pages.push('...');
+      pages.push(totalPages);
+    }
+    
+    return pages;
+  }
+
+  function handlePageSizeChange(event) {
+    safeProbesPageSize = parseInt(event.target.value);
+    safeProbesPage = 1;
+    filteredSafeProbes = [...filteredSafeProbes]; 
+  }
+
   function handleSearchKeypress(event) {
     if (event.key === 'Enter') {
       searchProbeById();
@@ -348,10 +685,19 @@
   async function fetchStatus() {
     try {
       const res = await fetch(`/jobs/${jobId}`);
+      if (res.status === 404) {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        error = `Job ${jobId} not found. It may have expired or been deleted.`;
+        return;
+      }
       if (!res.ok) throw new Error('Failed to get status');
       const data = await res.json();
       status = data.status;
       info = data.info;
+      console.log('info.species:', info?.species);
       inputType = data.input_type || info?.input_type;
 
       if (status === 'SUCCESS' || status === 'FAILURE') {
@@ -384,6 +730,10 @@
       }
     } catch (e) {
       error = String(e);
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
     }
   }
 
@@ -405,7 +755,7 @@
     }
   }
 
-  function getPageNumbers() {
+  function getPageNumbers(currentPage, totalPages) {
     const pages = [];
     const maxVisible = 5;
     
@@ -413,22 +763,31 @@
       for (let i = 1; i <= totalPages; i++) {
         pages.push(i);
       }
-    } else {
-      if (currentPage <= 3) {
-        for (let i = 1; i <= 4; i++) pages.push(i);
-        pages.push('...');
-        pages.push(totalPages);
-      } else if (currentPage >= totalPages - 2) {
-        pages.push(1);
-        pages.push('...');
-        for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i);
-      } else {
-        pages.push(1);
-        pages.push('...');
-        for (let i = currentPage - 1; i <= currentPage + 1; i++) pages.push(i);
-        pages.push('...');
-        pages.push(totalPages);
+      return pages;
+    } 
+    
+    pages.push(1);
+    
+    if (currentPage <= 3) {
+      for (let i = 2; i <= 4; i++) {
+        pages.push(i);
       }
+      pages.push('...');
+      pages.push(totalPages);
+      
+    } else if (currentPage >= totalPages - 2) {
+      pages.push('...');
+      for (let i = totalPages - 3; i <= totalPages; i++) {
+        pages.push(i);
+      }
+      
+    } else {
+      pages.push('...');
+      pages.push(currentPage - 1);
+      pages.push(currentPage);
+      pages.push(currentPage + 1);
+      pages.push('...');
+      pages.push(totalPages);
     }
     
     return pages;
@@ -546,32 +905,10 @@
           <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
             <div>{formatNumber(info.stats.non_aligned_probes)}</div>
             {#each files as f}
-              {#if f.filename.toLowerCase() === 'non_aligned_probes.fa'}
+              {#if f.filename.toLowerCase() === 'non_aligned_probes_scores.txt'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
-                  style="
-                    display:inline-flex;
-                    align-items:center;
-                    gap:4px;
-                    color:#1d4ed8;
-                    font-size:13px;
-                    text-decoration:none;
-                    font-style:italic;
-                    margin-top:3px;
-                    padding:3px 8px;
-                    border-radius:3px;
-                    background:#dbeafe;
-                    border:1px solid #bfdbfe;
-                    transition:background 0.15s ease;
-                  "
-                  on:focus={() => (event.target.style.background = '#bfdbfe')}
-                  on:blur={() => (event.target.style.background = '#dbeafe')}
-                  on:mouseover={(e) => {
-                    e.target.style.background = '#bfdbfe';
-                  }}
-                  on:mouseout={(e) => {
-                    e.target.style.background = '#dbeafe';
-                  }}
+                  class="download-link"
                 >
                   <span>Download Probes</span>
                 </a>
@@ -586,29 +923,7 @@
               {#if f.filename.toLowerCase() === 'probe_alignments.sam'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
-                  style="
-                    display:inline-flex;
-                    align-items:center;
-                    gap:4px;
-                    color:#1d4ed8;
-                    font-size:13px;
-                    text-decoration:none;
-                    font-style:italic;
-                    margin-top:3px;
-                    padding:3px 8px;
-                    border-radius:3px;
-                    background:#dbeafe;
-                    border:1px solid #bfdbfe;
-                    transition:background 0.15s ease;
-                  "
-                  on:focus={() => (event.target.style.background = '#bfdbfe')}
-                  on:blur={() => (event.target.style.background = '#dbeafe')}
-                  on:mouseover={(e) => {
-                    e.target.style.background = '#bfdbfe';
-                  }}
-                  on:mouseout={(e) => {
-                    e.target.style.background = '#dbeafe';
-                  }}
+                  class="download-link"
                 >
                   Download Alignments
                 </a>
@@ -620,7 +935,345 @@
     </table>
   </div>
 {/if}
-  
+  {#if info && info.stats && info.stats.non_aligned_probes > 0}
+    <div style="margin-top:1.5rem;">
+      <button
+        on:click={toggleSafeProbes}
+        class="collapsible-button"
+      >
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="text-align: left;">
+            <div style="font-weight: 600; font-size: 15px; font-family: inherit;">
+              Safe Probe Scoring Details ({formatNumber(info.stats.non_aligned_probes)} probes)
+            </div>
+            <div style="font-size: 12px; color: #6b7280; font-weight: 400;">
+              Click to view quality metrics and rankings
+            </div>
+          </div>
+        </div>
+        <span style="transform: rotate({showSafeProbes ? '180' : '0'}deg); transition: transform 0.3s;">▼</span>
+      </button>
+
+      {#if showSafeProbes}
+        <div transition:slide={{ duration: 300, easing: quintOut }} style="margin-top:12px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
+        
+          <div style="padding:16px; background:#f9fafb; border-bottom:1px solid #e5e7eb;">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+              <div>
+                <label for="safe-probe-search" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Search Probe ID</label>
+                <input
+                  id="safe-probe-search"
+                  type="text"
+                  placeholder="Enter probe ID..."
+                  value={safeProbeSearch}
+                  on:input={handleSafeProbeSearchInput}
+                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
+                />
+              </div>
+              
+              <div>
+                <label for="min-score" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Minimum Score</label>
+                <input
+                  id="min-score"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="5"
+                  placeholder="0-100"
+                  on:input={handleMinScoreChange}
+                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
+                />
+              </div>
+              
+              <div>
+                <label for="quality-filter" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Quality Status</label>
+                <select
+                  id="quality-filter"
+                  on:change={handleQualityFilterChange}
+                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
+                >
+                  <option value="all">All</option>
+                  <option value="excellent">Excellent</option>
+                  <option value="very good">Very Good</option>
+                  <option value="good">Good</option>
+                  <option value="acceptable">Acceptable</option>
+                  <option value="marginal">Marginal</option>
+                  <option value="rejected">Rejected</option>
+                </select>
+              </div>
+            </div>
+            
+            <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
+              <div style="font-size:13px; color:#6b7280;">
+                Showing {((safeProbesPage - 1) * safeProbesPageSize) + 1}-{Math.min(safeProbesPage * safeProbesPageSize, filteredSafeProbes.length)} of {filteredSafeProbes.length} probes
+              </div>
+              <div style="display:flex; align-items:center; gap:8px;">
+                <label for="page-size" style="font-size:13px; color:#374151;">Rows per page:</label>
+                <select
+                  id="page-size"
+                  on:change={handlePageSizeChange}
+                  value={safeProbesPageSize}
+                  style="padding:4px 8px; border:1px solid #d1d5db; border-radius:4px; font-size:13px;"
+                >
+                  {#each safeProbesPageSizeOptions as option}
+                    <option value={option}>{option}</option>
+                  {/each}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {#if loadingSafeProbes}
+            <div style="padding:40px; text-align:center;">
+              <div class="spinner" style="width:32px; height:32px; margin:0 auto 12px;"></div>
+              <p style="color:#6b7280; margin:0;">Loading probe scores...</p>
+            </div>
+          {:else if filteredSafeProbes.length > 0}
+            <div style="overflow-x:auto;">
+              <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead>
+                  <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
+                    <th style="padding:10px; text-align:center;">Rank</th>
+                    <th style="padding:10px; text-align:left;">Probe ID</th>
+                    <th style="padding:10px; text-align:left;">Sequence</th>
+                    <th style="padding:10px; text-align:center;">Score</th>
+                    <th style="padding:10px; text-align:center;">Tm (°C)</th>
+                    <th style="padding:10px; text-align:center;">GC%</th>
+                    <th style="padding:10px; text-align:center;">Length</th>
+                    <th style="padding:10px; text-align:center;">Complexity</th>
+                    <th style="padding:10px; text-align:center;">Sec. Struct</th>
+                    <th style="padding:10px; text-align:center;">Homopolymer</th>
+                    <th style="padding:10px; text-align:center;">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each paginatedProbes as probe (probe.probe_id)}
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:10px; text-align:center; color:#6b7280;">{probe.rank}</td>
+                      <td style="padding:10px; font-family:monospace; color:#1f2937;">{probe.probe_id}</td>
+                      <td style="padding:10px; font-family:monospace; font-size:10px; word-break:break-all; max-width:200px;">{probe.sequence}</td>
+                      <td style="padding:10px; text-align:center;">
+                        <span style="
+                          padding:4px 8px;
+                          border-radius:4px;
+                          font-weight:600;
+                          background:{probe.score >= 80 ? '#d1fae5' : probe.score >= 60 ? '#fef3c7' : '#fee2e2'};
+                          color:{probe.score >= 80 ? '#065f46' : probe.score >= 60 ? '#92400e' : '#991b1b'};
+                        ">
+                          {probe.score.toFixed(1)}
+                        </span>
+                      </td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.tm.toFixed(1)}</td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.gc_content.toFixed(1)}</td>
+                      <td style="padding:10px; text-align:center;">{probe.length}</td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.complexity.toFixed(2)}</td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.sec_struct.toFixed(2)}</td>
+                      <td style="padding:10px; text-align:center;">{probe.homopolymer}</td>
+                      <td style="padding:10px; text-align:center;">
+                        <span style="
+                          padding:3px 8px;
+                          border-radius:3px;
+                          font-size:11px;
+                          font-weight:600;
+                          background:{probe.status.toLowerCase() === 'excellent' ? '#d1fae5' : 
+                                    probe.status.toLowerCase() === 'very good' ? '#dbeafe' :
+                                    probe.status.toLowerCase() === 'good' ? '#e0e7ff' :
+                                    probe.status.toLowerCase() === 'acceptable' ? '#fef3c7' :
+                                    probe.status.toLowerCase() === 'rejected' ? '#fee2e2' : '#f3f4f6'};
+                          color:{probe.status.toLowerCase() === 'excellent' ? '#065f46' :
+                                probe.status.toLowerCase() === 'very good' ? '#1e40af' :
+                                probe.status.toLowerCase() === 'good' ? '#3730a3' :
+                                probe.status.toLowerCase() === 'acceptable' ? '#92400e' :
+                                probe.status.toLowerCase() === 'rejected' ? '#991b1b' : '#374151'};
+                        ">
+                          {probe.status}
+                        </span>
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            
+            <div style="padding:16px; display:flex; justify-content:center; align-items:center; gap:8px; border-top:1px solid #e5e7eb;">
+              <button
+                on:click={prevSafeProbePage}
+                disabled={isPrevDisabled}
+                style="
+                  padding:6px 12px;
+                  border:1px solid #d1d5db;
+                  border-radius:4px;
+                  background:{isPrevDisabled ? '#e5e7eb' : '#3b82f6'};
+                  color:{isPrevDisabled ? '#9ca3af' : 'white'};
+                  cursor:{isPrevDisabled ? 'not-allowed' : 'pointer'};
+                  font-weight:500;
+                  font-size:13px;
+                  opacity:{isPrevDisabled ? 0.6 : 1};
+                "
+              >
+                Previous
+              </button>
+              
+              {#each safeProbesPageNumbers as pageNum}
+                {#if pageNum === '...'}
+                  <span style="padding:6px 8px; color:#9ca3af;">...</span>
+                {:else}
+                  <button
+                    on:click={() => goToSafeProbePage(pageNum)}
+                    style="
+                      padding:6px 12px;
+                      border:1px solid #d1d5db;
+                      border-radius:4px;
+                      background:{pageNum === safeProbesPage ? '#3b82f6' : 'white'};
+                      color:{pageNum === safeProbesPage ? 'white' : '#374151'};
+                      cursor:pointer;
+                      font-weight:{pageNum === safeProbesPage ? 600 : 400};
+                      font-size:13px;
+                    "
+                  >
+                    {pageNum}
+                  </button>
+                {/if}
+              {/each}
+              
+              <button
+                on:click={nextSafeProbePage}
+                disabled={isNextDisabled}
+                style="
+                  padding:6px 12px;
+                  border:1px solid #d1d5db;
+                  border-radius:4px;
+                  background:{isNextDisabled ? '#e5e7eb' : '#3b82f6'};
+                  color:{isNextDisabled ? '#9ca3af' : 'white'};
+                  cursor:{isNextDisabled ? 'not-allowed' : 'pointer'};
+                  font-weight:500;
+                  font-size:13px;
+                  opacity:{isNextDisabled ? 0.6 : 1};
+                "
+              >
+                Next
+              </button>
+            </div>
+            
+          {:else}
+            <div style="padding:40px; text-align:center; color:#6b7280;">
+              No probes match the current filters
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
+  {#if status === 'SUCCESS' && info && (info.species === 'gut-microbe' || info.species === 'human-oral-microbiome' || info.species === 'human-skin-microbiome' || info.species === 'human-vaginal-microbiome' || info.species === 'mouse-gut-microbiome')}
+    <div style="margin-top:1.5rem;">
+      <button on:click={toggleMicrobiomeSelfAligned} class="collapsible-button">
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <div style="text-align: left;">
+            <div style="font-weight: 600; font-size: 15px;">
+              Microbiome Self-Aligned Probes
+            </div>
+            <div style="font-size: 12px; color: #6b7280; font-weight: 400;">
+              Probes with single self-alignment to source genome
+            </div>
+          </div>
+        </div>
+        <span style="transform: rotate({showMicrobiomeSelfAligned ? '180' : '0'}deg); transition: transform 0.3s;">▼</span>
+      </button>
+
+      {#if showMicrobiomeSelfAligned}
+        <div transition:slide={{ duration: 300, easing: quintOut }} style="margin-top:12px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
+          {#if loadingMicrobiomeSelfAligned}
+            <div style="padding:40px; text-align:center;">
+              <div class="spinner" style="width:32px; height:32px; margin:0 auto 12px;"></div>
+              <p style="color:#6b7280; margin:0;">Loading microbiome self-alignments...</p>
+            </div>
+          {:else if microbiomeSelfAligned.length > 0}
+            <div style="padding:16px; background:#f9fafb; border-bottom:1px solid #e5e7eb;">
+              <div style="font-size:13px; color:#6b7280;">
+                Showing {microbiomeSelfAligned.length} probe{microbiomeSelfAligned.length !== 1 ? 's' : ''} with safe self-alignment
+              </div>
+            </div>
+            <div style="overflow-x:auto;">
+              <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead>
+                  <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
+                    <th style="padding:10px; text-align:left;">#</th>
+                    <th style="padding:10px; text-align:left;">Probe ID</th>
+                    <th style="padding:10px; text-align:left;">Target</th>
+                    <th style="padding:10px; text-align:left;">Species</th>
+                    <th style="padding:10px; text-align:center;">Mismatches</th>
+                    <th style="padding:10px; text-align:center;">Position</th>
+                    <th style="padding:10px; text-align:center;">Strand</th>
+                    <th style="padding:10px; text-align:center;">GC%</th>
+                    <th style="padding:10px; text-align:left;">Sequence</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each microbiomeSelfAligned.slice((microbiomeCurrentPage - 1) * microbiomeRowsPerPage, microbiomeCurrentPage * microbiomeRowsPerPage) as probe, idx}
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:10px; color:#6b7280;">{(microbiomeCurrentPage - 1) * microbiomeRowsPerPage + idx + 1}</td>
+                      <td style="padding:10px; font-family:monospace; color:#1f2937;">{probe.probe_id}</td>
+                      <td style="padding:10px; font-family:monospace; color:#374151; font-size:11px;">{probe.target || '-'}</td>
+                      <td style="padding:10px; color:#374151; font-size:11px;">{probe.species}</td>
+                      <td style="padding:10px; text-align:center;">
+                        <span style="padding:3px 8px; border-radius:3px; font-weight:600; background:#d1fae5; color:#065f46;">
+                          {probe.mismatches}
+                        </span>
+                      </td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.position?.toLocaleString() || '-'}</td>
+                      <td style="padding:10px; text-align:center;">
+                        <span style="padding:3px 8px; background:#e5e7eb; border-radius:3px; font-family:monospace;">
+                          {probe.strand || '+'}
+                        </span>
+                      </td>
+                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.gc_content || '-'}</td>
+                      <td style="padding:10px;">
+                        {#if probe.sequence}
+                          <div style="font-family:monospace; font-size:10px; line-height:1.5; word-break:break-all;">
+                            {probe.sequence}
+                          </div>
+                        {:else}
+                          <span style="color:#9ca3af;">N/A</span>
+                        {/if}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+            
+            {#if microbiomeSelfAligned.length > microbiomeRowsPerPage}
+              <div style="padding:12px 16px; background:#f9fafb; border-top:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-size:12px; color:#6b7280;">
+                  Page {microbiomeCurrentPage} of {Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage)}
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button 
+                    on:click={() => microbiomeCurrentPage = Math.max(1, microbiomeCurrentPage - 1)}
+                    disabled={microbiomeCurrentPage === 1}
+                    style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:white; cursor:pointer; font-size:12px; {microbiomeCurrentPage === 1 ? 'opacity:0.5; cursor:not-allowed;' : ''}"
+                  >
+                    Previous
+                  </button>
+                  <button 
+                    on:click={() => microbiomeCurrentPage = Math.min(Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage), microbiomeCurrentPage + 1)}
+                    disabled={microbiomeCurrentPage >= Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage)}
+                    style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:white; cursor:pointer; font-size:12px; {microbiomeCurrentPage >= Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage) ? 'opacity:0.5; cursor:not-allowed;' : ''}"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            {/if}
+          {:else}
+            <div style="padding:40px; text-align:center; color:#6b7280;">
+              No self-aligned probes found
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#if status === 'SUCCESS' && sequenceLength > 0 && inputType === 'gene_sequence'}
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
@@ -693,10 +1346,70 @@
             </div>
           
           {:else if expandedProbe.status === 'safe'}
-            <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
-              <div style="font-size:28px; margin-bottom:8px;">✓</div>
-              <p style="margin:0; font-weight:600;">No off-target alignments</p>
-            </div>
+            {#if expandedProbeAlignments.length > 0 && expandedProbeAlignments[0].type === 'scoring_data'}
+              <div style="overflow-x:auto;">
+                <div style="margin-bottom:12px; font-size:14px; color:#374151; font-weight:600;">
+                  Probe Quality Metrics
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                  <thead>
+                    <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
+                      <th style="padding:8px; text-align:left;">Metric</th>
+                      <th style="padding:8px; text-align:center;">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Score</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.score.toFixed(2)}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Quality Status</td>
+                      <td style="padding:8px; text-align:center;">
+                        <span style="padding:3px 8px; border-radius:3px; background:#10b981; color:white; font-weight:600;">
+                          {expandedProbeAlignments[0].data.status}
+                        </span>
+                      </td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Tm (°C)</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.tm.toFixed(2)}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">GC Content (%)</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.gc_content.toFixed(1)}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Length (bp)</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.length}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Complexity</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.complexity.toFixed(3)}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Secondary Structure</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.sec_struct.toFixed(3)}</td>
+                    </tr>
+                    <tr style="border-bottom:1px solid #e5e7eb;">
+                      <td style="padding:8px; font-weight:600;">Homopolymer</td>
+                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.homopoly}</td>
+                    </tr>
+                  </tbody>
+                </table>
+                
+                <div style="margin-top:16px; padding:12px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
+                  <div style="font-size:20px; margin-bottom:6px;">✓</div>
+                  <p style="margin:0; font-weight:600;">Safe Probe - No off-target alignments</p>
+                </div>
+              </div>
+            {:else}
+              
+              <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
+                <div style="font-size:28px; margin-bottom:8px;">✓</div>
+                <p style="margin:0; font-weight:600;">No off-target alignments</p>
+              </div>
+            {/if}
             
           {:else if expandedProbeAlignments.length === 0}
             <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
@@ -714,6 +1427,11 @@
                   <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
                     <th style="padding:8px; text-align:left;">#</th>
                     <th style="padding:8px; text-align:left;">Target</th>
+                    {#if info?.species === 'human' || info?.species === 'mouse'}
+                      <th style="padding:8px; text-align:left;">Gene ID</th>
+                    {:else}
+                      <th style="padding:8px; text-align:left;">Species</th>
+                    {/if}
                     <th style="padding:8px; text-align:center;">Mismatches</th>
                     <th style="padding:8px; text-align:center;">Position</th>
                     <th style="padding:8px; text-align:center;">Strand</th>
@@ -726,6 +1444,15 @@
                     <tr style="border-bottom:1px solid #e5e7eb;">
                       <td style="padding:8px; color:#6b7280;">{idx + 1}</td>
                       <td style="padding:8px; font-family:monospace; color:#1f2937;">{aln.target_transcript}</td>
+                      {#if info?.species === 'human' || info?.species === 'mouse'}
+                        <td style="padding:8px; color:#1f2937; font-weight:600;">
+                          {aln.gene_id || '-'}
+                        </td>
+                      {:else}
+                        <td style="padding:8px; font-family:monospace; color:#374151; font-size:12px;">
+                          {aln.species || '-'}
+                        </td>
+                      {/if}
                       <td style="padding:8px; text-align:center;">
                         <span style="padding:3px 6px; border-radius:3px; font-weight:600; background:{aln.mismatches <= 1 ? '#fee2e2' : '#fff7ed'}; color:{aln.mismatches <= 1 ? '#991b1b' : '#9a3412'};">
                           {aln.mismatches}
@@ -789,6 +1516,11 @@
                 <th style="padding:10px; text-align:center;">GC%</th>
                 <th style="padding:10px; text-align:left;">Sequence</th>
                 <th style="padding:10px; text-align:left;">Target</th>
+                {#if info?.species === 'human' || info?.species === 'mouse'}
+                  <th style="padding:10px; text-align:left;">Gene ID</th>
+                {:else}
+                  <th style="padding:10px; text-align:left;">Species</th>
+                {/if}
                 <th style="padding:10px; text-align:center;">Mismatches</th>
                 <th style="padding:10px; text-align:center;">Position</th>
                 <th style="padding:10px; text-align:center;">Strand</th>
@@ -816,6 +1548,13 @@
                     <td style="padding:10px; font-family:monospace; color:#374151;">
                       {aln.target_transcript}
                     </td>
+                    <td style="padding:8px; color:#1f2937; font-weight:600;">
+                      {#if info?.species === 'human' || info?.species === 'mouse'}
+                        {aln.gene_id || '-'}
+                      {:else}
+                        {aln.species || '-'}
+                      {/if}
+                    </td>
                     <td style="padding:10px; text-align:center;">
                       <span style="padding:3px 8px; border-radius:3px; font-weight:600; background:{aln.mismatches <= 1 ? '#fee2e2' : '#fff7ed'}; color:{aln.mismatches <= 1 ? '#991b1b' : '#9a3412'};">
                         {aln.mismatches}
@@ -836,16 +1575,25 @@
           </table>
         </div>
         <div style="margin-top:16px; display:flex; justify-content:center; align-items:center; gap:8px;">
-          <Button 
-            variant="primary" 
-            size="sm"
-            onClick={prevPage}
-            disabled={currentPage === 1}
+          <button
+            on:click={prevPage}
+            disabled={alignmentsPrevDisabled}
+            style="
+              padding:6px 12px;
+              border:1px solid #d1d5db;
+              border-radius:4px;
+              background:{alignmentsPrevDisabled ? '#e5e7eb' : '#3b82f6'};
+              color:{alignmentsPrevDisabled ? '#9ca3af' : 'white'};
+              cursor:{alignmentsPrevDisabled ? 'not-allowed' : 'pointer'};
+              font-weight:500;
+              font-size:13px;
+              opacity:{alignmentsPrevDisabled ? 0.6 : 1};
+            "
           >
             Previous
-          </Button>
+          </button>
           
-          {#each getPageNumbers() as pageNum}
+          {#each pageNumbers as pageNum}
             {#if pageNum === '...'}
               <span style="padding:6px 8px; color:#9ca3af;">...</span>
             {:else}
@@ -858,14 +1606,23 @@
             {/if}
           {/each}
           
-          <Button 
-            variant="primary" 
-            size="sm"
-            onClick={nextPage}
-            disabled={currentPage === totalPages}
+          <button
+            on:click={nextPage}
+            disabled={alignmentsNextDisabled}
+            style="
+              padding:6px 12px;
+              border:1px solid #d1d5db;
+              border-radius:4px;
+              background:{alignmentsNextDisabled ? '#e5e7eb' : '#3b82f6'};
+              color:{alignmentsNextDisabled ? '#9ca3af' : 'white'};
+              cursor:{alignmentsNextDisabled ? 'not-allowed' : 'pointer'};
+              font-weight:500;
+              font-size:13px;
+              opacity:{alignmentsNextDisabled ? 0.6 : 1};
+            "
           >
             Next
-          </Button>
+          </button>
         </div>
       {:else}
         <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
@@ -906,4 +1663,45 @@
     padding: 1px 2px;
     border-radius: 2px;
   }
+  .download-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #1d4ed8;
+    font-size: 13px;
+    text-decoration: none;
+    font-style: italic;
+    margin-top: 3px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: #dbeafe;
+    border: 1px solid #bfdbfe;
+    transition: background 0.15s ease;
+  }
+  
+  .download-link:hover,
+  .download-link:focus {
+    background: #bfdbfe;
+  }
+  .collapsible-button {
+  width: 100%;
+  padding: 12px 16px;
+  background: #d1fae5;  
+  border: 1px solid #10b981;  
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 600;
+  font-size: 15px;
+  color: #065f46; 
+  transition: background 0.2s;
+}
+
+.collapsible-button:hover {
+  background: #a7f3d0;  
+}
+
+  
 </style>

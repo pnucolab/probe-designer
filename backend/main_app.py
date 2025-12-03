@@ -91,10 +91,11 @@ class AlignmentRecord(BaseModel):
     probe_id: str
     sequence: str
     target_transcript: str
+    gene_id: Optional[str] = None
     mismatches: int
     position: int
     strand: str
-
+    species: Optional[str] = None
 class AlignmentsResponse(BaseModel):
     """Response model for parsed alignments with pagination."""
     job_id: str
@@ -433,7 +434,8 @@ def get_job(job_id: str):
                 pass
             else:
                 raise HTTPException(status_code=404, detail="Job not found")
-        
+            
+        info["species"] = jobs[job_id].get("species", "unknown")
         return {
             "job_id": job_id,
             "status": state,
@@ -527,7 +529,7 @@ def get_job_alignments(
     probe_id: Optional[str] = Query(None, description="Get all alignments for specific probe")  # ADD THIS LINE
 ):
     """
-    Get parsed alignment data from filtered_probe_alignments.sam with pagination
+    Get parsed alignment data from filtered_probe_alignments_annotated.sam with pagination
     
     Parameters:
     - job_id: The job UUID
@@ -541,13 +543,27 @@ def get_job_alignments(
         raise HTTPException(status_code=400, detail="Invalid job ID format") from e
 
     job_dir = ROOT / "outputs" / "alignments" / job_id
-    sam_file = job_dir / "filtered_probe_alignments.sam"
-    
+    annotated_sam = job_dir / "filtered_probe_alignments_annotated.sam"
+    sam_file = annotated_sam if annotated_sam.exists() else job_dir / "filtered_probe_alignments.sam"
+
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job results not found")
+    sam_file = job_dir / "filtered_probe_alignments_annotated.sam"
+
+    if not sam_file.exists():
+        sam_file = job_dir / "filtered_probe_alignments.sam"
+        logger.warning("Annotated SAM not found for job %s, using non-annotated", job_id)
     
     if not sam_file.exists():
-        raise HTTPException(status_code=404, detail="Filtered alignments file not found")
+        logger.info("No alignment file found for job %s - all probes are safe", job_id)
+        return {
+            "job_id": job_id,
+            "total_alignments": 0,
+            "alignments": [],
+            "page": page,
+            "page_size": page_size,
+            "total_pages": 0
+        }
     
     if probe_id is not None:
         try:
@@ -622,11 +638,14 @@ def download_job_file(job_id: str, filename: str):
     allowed_files = [
         "probe_alignments.sam",
         "filtered_probe_alignments.sam",
+        "filtered_probe_alignments_annotated.sam", 
+        "non_aligned_probes_scores.txt",
         "filtered_probe_alignments.bam",
         "filtered_probe_alignments.bam.bai",
         "probe_alignments.bam",
         "probe_alignments.bam.bai",
         "non_aligned_probes.fa",
+        "non_aligned_probes_scores.txt",
         "candidate_probes.fa",
         "reference.fasta",
         "reference.fasta.fai",
