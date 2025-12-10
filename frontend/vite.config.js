@@ -12,7 +12,7 @@ export default defineConfig({
   optimizeDeps: {
     include: ['buffer']
   },
-  server: {
+  server: {  
     port: 5173,
     proxy: {
       '/jobs': {

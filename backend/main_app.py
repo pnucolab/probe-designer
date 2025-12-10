@@ -311,6 +311,16 @@ async def create_job(
         storage_dir = PROBE_SEQUENCES_DIR
         storage_dir.mkdir(parents=True, exist_ok=True)
         filename = 'pasted_probes.fasta'
+        try:
+            lines = probe_sequence.strip().split('\n')
+            sequences = [line.strip() for line in lines if line.strip() and not line.startswith('>')]
+            if sequences:
+                lengths = set(len(seq) for seq in sequences)
+                if len(lengths) == 1:
+                    probe_length = lengths.pop()
+                    logger.info(f"Detected probe length from input: {probe_length} bp")
+        except Exception:
+            pass
     
     is_valid, validation_error = validate_fasta_content(content, input_type)
     if not is_valid:
@@ -639,17 +649,18 @@ def download_job_file(job_id: str, filename: str):
         "probe_alignments.sam",
         "filtered_probe_alignments.sam",
         "filtered_probe_alignments_annotated.sam", 
-        "non_aligned_probes_scores.txt",
+        "safe_probes_scores.txt",
         "filtered_probe_alignments.bam",
         "filtered_probe_alignments.bam.bai",
         "probe_alignments.bam",
         "probe_alignments.bam.bai",
         "non_aligned_probes.fa",
-        "non_aligned_probes_scores.txt",
+        "safe_probes_scores.txt",
         "candidate_probes.fa",
         "reference.fasta",
         "reference.fasta.fai",
-        "probes.gff3"
+        "probes.gff3",
+        "14mer_matches_report.txt"
     ]
     allowed_normalized = {f.lower().strip() for f in allowed_files}
     if filename.lower() not in allowed_normalized:

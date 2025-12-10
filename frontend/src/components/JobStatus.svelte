@@ -238,7 +238,7 @@
         console.log('Fetching scoring data for safe probe:', featureData.probe_id);
         
         try {
-          const scoresRes = await fetch(`/jobs/${jobId}/download/non_aligned_probes_scores.txt`);
+          const scoresRes = await fetch(`/jobs/${jobId}/download/safe_probes_scores.txt`);
           if (scoresRes.ok) {
             const scoresText = await scoresRes.text();
             const lines = scoresText.split('\n');
@@ -407,7 +407,7 @@
   async function fetchSafeProbes() {
     loadingSafeProbes = true;
     try {
-      const res = await fetch(`/jobs/${jobId}/download/non_aligned_probes_scores.txt`);
+      const res = await fetch(`/jobs/${jobId}/download/safe_probes_scores.txt`);
       if (res.ok) {
         const text = await res.text();
         const lines = text.split('\n');
@@ -878,7 +878,29 @@
     "
   >
     <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Result Summary</h3>
-
+    {#if info.stats.candidate_probes === 0}
+      <div style="
+        padding:16px;
+        background:#fef2f2;
+        border:1px solid #fca5a5;
+        border-radius:6px;
+        margin-bottom:16px;
+      ">
+        <div style="display:flex; align-items:start; gap:12px;">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" style="flex-shrink:0; margin-top:2px;">
+            <circle cx="12" cy="12" r="10" fill="#dc2626"/>
+            <path d="M12 8v4M12 16h.01" stroke="white" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <div>
+            <div style="font-weight:600; color:#991b1b; font-size:15px; margin-bottom:4px;">
+              None of the probes passed the GC content filter (40-60%). 
+              This may occur if the input sequence has extreme GC content. 
+              Consider adjusting the probe length or target a different region of the sequence.
+            </div>
+          </div>
+        </div>
+      </div>
+    {/if}
     <table
       style="
         width:100%;
@@ -891,9 +913,9 @@
     >
       <thead>
         <tr style="background:#f3f4f6;">
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Candidate Probes (40–60% GC content)</th>
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Safe Probes (non-aligned)</th>
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Filtered Alignments (&lt;=2 mismatches)</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Candidate Probes (40–80% GC content)</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Safe Probes Identified</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">K-mer Safety Analysis Result (&gt;=14 consecutive matches)</th>
         </tr>
       </thead>
 
@@ -904,8 +926,9 @@
           </td>
           <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
             <div>{formatNumber(info.stats.non_aligned_probes)}</div>
+            {#if info.stats.non_aligned_probes > 0}
             {#each files as f}
-              {#if f.filename.toLowerCase() === 'non_aligned_probes_scores.txt'}
+              {#if f.filename.toLowerCase() === 'safe_probes_scores.txt'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
                   class="download-link"
@@ -914,18 +937,19 @@
                 </a>
               {/if}
             {/each}
+            {/if}
           </td>
 
           
           <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
-            <div>{formatNumber(info.stats.filtered_alignments)}</div>
+            
             {#each files as f}
-              {#if f.filename.toLowerCase() === 'probe_alignments.sam'}
+              {#if f.filename.toLowerCase() === '14mer_matches_report.txt'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
                   class="download-link"
                 >
-                  Download Alignments
+                  Download Report
                 </a>
               {/if}
             {/each}

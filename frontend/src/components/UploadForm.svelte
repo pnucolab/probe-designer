@@ -50,7 +50,7 @@ GCCGCCTTCTTCGGCATATC`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   let species = 'human';
-  let probe_length = 20;
+  let probe_length = 30;
   let max_mismatches = 2;
   let uploading = false;
   let error = '';
@@ -87,7 +87,10 @@ GCCGCCTTCTTCGGCATATC`;
     }
 
     form.append('species', species);
-    form.append('probe_length', String(probe_length));
+    if (inputType === 'gene') {
+      form.append('probe_length', String(probe_length));
+    }
+
     form.append('max_mismatches', String(max_mismatches));
 
     console.log('Form data being sent:');
@@ -155,7 +158,7 @@ GCCGCCTTCTTCGGCATATC`;
 
     <div class="form-grid">
       <div>
-        <label for="species" class="label-text">Host Organism</label>
+        <label for="species" class="label-text">Host Organism / Target Microbiome</label>
         <select id="species" bind:value={species} class="select-input">
           <option value="human">Human Transcriptome</option>
           <option value="gut-microbe">Human Gut Microbiome</option>
@@ -167,15 +170,15 @@ GCCGCCTTCTTCGGCATATC`;
 
         </select>
       </div>
-
-      <div>
-        <label for="probe_length" class="label-text">Probe Length (bp)</label>
-        <input id="probe_length" type="number" bind:value={probe_length} class="number-input" />
-      </div>
-
+     {#if inputType === 'gene'}
+        <div>
+          <label for="probe_length" class="label-text">Probe Length (bp)</label>
+          <input id="probe_length" type="number" bind:value={probe_length} class="number-input" />
+        </div>
+      {/if}
       <div>
         <label for="max_mismatches" class="label-text">Max Mismatches</label>
-        <input id="max_mismatches" type="number" min="0" max="2" bind:value={max_mismatches} class="number-input" />
+        <input id="max_mismatches" type="number" min="0" bind:value={max_mismatches} class="number-input" />
       </div>
     </div>
   </div>

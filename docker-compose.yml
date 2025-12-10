@@ -11,8 +11,6 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     container_name: probe-designer-api
-    expose:
-      - "8002"
     environment:
       - CELERY_BROKER_URL=redis://redis:6379/1
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
@@ -55,7 +53,7 @@ services:
       dockerfile: Dockerfile
     container_name: probe-designer-frontend
     ports:
-      - "4000:80"
+      - "5873:80"
     volumes:
     - ./frontend/src:/app/src
     depends_on:

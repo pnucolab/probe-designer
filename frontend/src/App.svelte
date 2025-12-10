@@ -82,18 +82,18 @@
 
   {:else if currentView === 'about'}
     <div class="section">
-      <h1 class="heading-1">About Microbial Probe Designer</h1>
+      <h1 class="heading-1">About SoloMicrobe</h1>
       
       <section>
         <h2 class="heading-2">Overview</h2>
         <p class="text-body">
-          Microbial-probe designer is a webtool for designing oligonucleotide probes 
-          that specifically target microbial gene sequences while minimizing potential 
-          cross-hybridization with host genomes. Users can upload microbial gene sequences, 
-          and the tool generates candidate probes from this input, filtering out those with 
-          up to two mismatches against the host genome. The resulting high-specificity probes are suitable for applications 
-          such as single-cell and spatial transcriptomics, enabling accurate detection of microbial 
-          transcripts in host-associated samples.
+          SoloMicrobe is an interactive web platform for designing oligonucleotide probes 
+          that target microbial genes with high specificity. Users can provide microbial sequences or 
+          pre-existing probe sets, and the tool screens each candidate against the host genome and 
+          the co-residing microbes present in complex microbial communities, removing candidates with 
+          up to two mismatches and a stretch of greater than or equal to 14 consecutive matchesto 
+          off-target sequences.The final probe sets can be applied to detect microbial transcripts 
+          within complex, host-associated tissues.
         </p>
       </section>
 
@@ -134,8 +134,8 @@
         <h2 class="heading-2">Technical Details</h2>
         <div class="warning-box">
           <p class="info-box-text"><strong>Alignment Engine:</strong> razers3 for fast and accurate short-read alignment</p>
-          <p class="info-box-text"><strong>Host Genomes:</strong> Pre-indexed reference genomes for all hosts</p>
-          <p class="info-box-text"><strong>Probe Length Range:</strong> 20-50 nucleotides (default: 20bp)</p>
+          <p class="info-box-text"><strong>Host Genomes:</strong> Pre-indexed reference genomes for hosts</p>
+          <p class="info-box-text"><strong>Probe Length Range:</strong> 20-50 nucleotides (default: 30bp)</p>
           <p class="info-box-text"><strong>Mismatch Tolerance:</strong> 0-2 mismatches (default: 2)</p>
         </div>
       </section>
@@ -162,7 +162,7 @@
           Ready to design high-specificity probes for your microbiome study? 
           Go to the <strong>Design Probes</strong> tab to upload your 
           microbial gene sequences and set your analysis parameters. Probe filtering
-          against the host genome will be completed usually within minutes.
+          against the host genome will be completed within minutes.
         </p>
         <Button
           variant="gradient"

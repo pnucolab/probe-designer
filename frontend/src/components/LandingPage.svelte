@@ -7,7 +7,7 @@
   
   <div class="content-section">
     <h1 class="main-title">
-       Microbial Probe Designer
+       SoloMicrobe
     </h1>
     <h3 class="subtitle">Design highly specific oligonucleotide probes for microbial genomes</h3>
     

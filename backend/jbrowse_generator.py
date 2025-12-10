@@ -227,7 +227,21 @@ class JBrowseFileGenerator:
         
         logger.info(f"Generated: {gff3_path} with {len(probe_regions)} probes")
         return gff3_path
-    
+    def filter_sam_for_reference(self, sam_path: Path, reference_id: str):
+        """Filter SAM to only include alignments to the reference sequence."""
+        filtered_sam = sam_path.with_name(sam_path.stem + "_ref_only.sam")
+        
+        with open(sam_path, 'r', encoding='utf-8') as infile, \
+             open(filtered_sam, 'w', encoding='utf-8') as outfile:
+            for line in infile:
+                if line.startswith('@'): 
+                    outfile.write(line)
+                else:  
+                    fields = line.split('\t')
+                    if len(fields) > 2 and fields[2] == reference_id:
+                        outfile.write(line)
+        
+        return filtered_sam
     def convert_sam_to_indexed_bam(self, sam_path: Path, skip_if_exists: bool = True):
         """
         Convert SAM to sorted, indexed BAM with improved error handling.
@@ -253,8 +267,9 @@ class JBrowseFileGenerator:
                 raise FileNotFoundError(f"SAM file not found: {sam_path}")
             
             if sam_path.stat().st_size == 0:
-                logger.error(f"SAM file is empty: {sam_path}")
-                raise ValueError(f"SAM file is empty: {sam_path}")
+                logger.warning(f"SAM file is empty: {sam_path}")
+                return None
+            
             has_header = False
             with open(sam_path, 'r', encoding='utf-8') as f:
                 first_line = f.readline()
@@ -428,9 +443,9 @@ def generate_jbrowse_files(
         )
         
         candidate_probes_file = Path(output_dir) / "candidate_probes.fa"
-        aligned_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
+        # aligned_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
         classification_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
-        bam_conversion_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
+        # bam_conversion_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
 
         logger.info("Parsing probe regions and risk classifications")
         probe_regions = generator.parse_probe_regions_from_fasta(
@@ -444,34 +459,34 @@ def generate_jbrowse_files(
             reference_id=sequence_id
         )
         
-        bam_file = None
+        # bam_file = None
 
-        if bam_conversion_sam_file.exists():
-            logger.info("Converting filtered_probe_alignments.sam to BAM")
-            try:
-                bam_file = generator.convert_sam_to_indexed_bam(bam_conversion_sam_file)
-                logger.info(f"Successfully created filtered BAM: {bam_file}")
-            except Exception as e:
-                logger.warning(f"Failed to convert filtered_probe_alignments.sam: {e}")
+        # if bam_conversion_sam_file.exists():
+        #     logger.info("Converting filtered_probe_alignments.sam to BAM")
+        #     try:
+        #         bam_file = generator.convert_sam_to_indexed_bam(bam_conversion_sam_file)
+        #         logger.info(f"Successfully created filtered BAM: {bam_file}")
+        #     except Exception as e:
+        #         logger.warning(f"Failed to convert filtered_probe_alignments.sam: {e}")
 
-        main_sam_file = Path(output_dir) / "probe_alignments.sam"
-        if main_sam_file.exists():
-            logger.info("Converting probe_alignments.sam to BAM")
-            try:
-                main_bam_file = generator.convert_sam_to_indexed_bam(main_sam_file)
-                logger.info(f"Successfully created main BAM: {main_bam_file}")
-                # Use this as the primary BAM if filtered one failed
-                if bam_file is None:
-                    bam_file = main_bam_file
-            except Exception as e:
-                logger.warning(f"Failed to convert probe_alignments.sam: {e}")
+        # main_sam_file = Path(output_dir) / "probe_alignments.sam"
+        # if main_sam_file.exists():
+        #     logger.info("Converting probe_alignments.sam to BAM")
+        #     try:
+        #         main_bam_file = generator.convert_sam_to_indexed_bam(main_sam_file)
+        #         logger.info(f"Successfully created main BAM: {main_bam_file}")
+        #         # Use this as the primary BAM if filtered one failed
+        #         if bam_file is None:
+        #             bam_file = main_bam_file
+        #     except Exception as e:
+        #         logger.warning(f"Failed to convert probe_alignments.sam: {e}")
         
         result = {
             'reference_fasta': str(reference_fasta),
             'reference_fasta_index': str(reference_fasta) + '.fai',
             'probes_gff3': str(probes_gff3),
-            'bam_file': str(bam_file) if bam_file else None,
-            'bam_index': str(bam_file) + '.bai' if bam_file else None,
+            #'bam_file': str(bam_file) if bam_file else None,
+            #'bam_index': str(bam_file) + '.bai' if bam_file else None,
             'sequence_id': sequence_id,
             'sequence_length': len(sequence),
             'total_probes': len(probe_regions)

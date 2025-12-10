@@ -4,7 +4,7 @@
 
 <div style="display:flex; flex-direction:column; gap:1rem;">
   <h1 style="margin:0; font-size:2rem; font-weight:700; color:#1f2937;">
-    Microbial Probe Designer
+    SoloMicrobe
   </h1>
   
   <p style="line-height:1.6; color:#4b5563; margin:0;">

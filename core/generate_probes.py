@@ -16,7 +16,7 @@ def calculate_gc_content(sequence):
     gc_percentage = (g_count + c_count) / total_length * 100
     return gc_percentage
 
-def generate_candidate_probes(fasta_file, probe_length=30, step_size=3, min_gc=40, max_gc=60):
+def generate_candidate_probes(fasta_file, probe_length=30, step_size=3, min_gc=40, max_gc=80):
     candidate_probes = []
     total_checked = 0
     for record in SeqIO.parse(fasta_file, "fasta"):
@@ -55,8 +55,8 @@ if __name__ == "__main__":
                         help="Step size for sliding window (default: 1)")
     parser.add_argument("--min-gc", type=float, default=40,
                         help="Minimum GC content percentage (default: 40)")
-    parser.add_argument("--max-gc", type=float, default=60,
-                        help="Maximum GC content percentage (default: 60)")
+    parser.add_argument("--max-gc", type=float, default=80,
+                        help="Maximum GC content percentage (default: 80)")
     parser.add_argument("--max-mismatches", type=int, default=2,
                         help="Maximum number of mismatches allowed in alignments (default: 2)")
     parser.add_argument("--species", default="human",

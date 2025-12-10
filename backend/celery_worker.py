@@ -140,13 +140,11 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             logger.info("JBrowse files generated successfully:")
             logger.info("  - Reference FASTA: %s", jbrowse_result.get('reference_fasta'))
             logger.info("  - Probes GFF3: %s", jbrowse_result.get('probes_gff3'))
-            
-            if jbrowse_result.get('bam_file'):
-                logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
-                logger.info("  - BAM index: %s", jbrowse_result['bam_index'])
-            else:
-                logger.warning("  - BAM file was not generated")
-            
+            # if jbrowse_result.get('bam_file'):
+            #     logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
+            #     logger.info("  - BAM index: %s", jbrowse_result['bam_index'])
+            # else:
+            #     logger.warning("  - BAM file was not generated")
         except Exception as e:
             logger.error("Failed to generate JBrowse files for job %s: %s", job_id, str(e))
             logger.exception("JBrowse generation error details:")
@@ -161,10 +159,10 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
                 input_type=input_type
             )
             
-            if jbrowse_result.get('bam_file'):
-                logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
-            else:
-                logger.warning("  - BAM file generation failed or skipped")
+            #if jbrowse_result.get('bam_file'):
+                #logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
+            #else:
+                #logger.warning("  - BAM file generation failed or skipped")
             
             logger.info("JBrowse files generated successfully for job %s", job_id)
             
