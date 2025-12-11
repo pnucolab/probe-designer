@@ -22,19 +22,16 @@
   let expandedProbeAlignments = [];
   let loadingProbeAlignments = false;
   let loadingProgress = { current: 0, total: 0, percent: 0 };
-  let searchProbeId = '';
-  let searchedProbe = null;
-  let searchedAlignments = [];
-  let isSearching = false;
-  let searchError = null;
   let inputType = null;
   let safeProbes = [];
   let filteredSafeProbes = [];
   let showSafeProbes = false;
   let loadingSafeProbes = false;
-  let safeProbeSearch = '';
-  let safeProbeMinScore = null;
-  let safeProbeQuality = 'all';
+  let scoreFilter = 'all';
+  let tmFilter = 'all';
+  let gcFilter = 'all';
+  let homopolymerFilter = 'all';
+  let statusFilter = 'all';
   let safeProbesPage = 1;
   let safeProbesPageSize = 25;
   let safeProbesPageSizeOptions = [10, 25, 50, 100];
@@ -327,83 +324,7 @@
       loadingProbeAlignments = false;
     }
   }
-  async function searchProbeById() {
-    if (!searchProbeId.trim()) {
-      searchError = 'Please enter a probe ID';
-      return;
-    }
-    
-    console.log('\n========================================');
-    console.log('=== SEARCH INITIATED ===');
-    console.log('Searching for probe ID:', searchProbeId);
-    console.log('========================================\n');
-    
-    isSearching = true;
-    searchError = null;
-    searchedAlignments = [];
-    searchedProbe = null;
-    
-    try {
-      searchedProbe = {
-        probe_id: searchProbeId.trim(),
-        status: 'unknown' 
-      };
-      
-      console.log('Fetching alignments...');
-      const allProbeAlignments = await fetchAllProbeAlignments(searchProbeId);
-      
-      console.log('Fetch complete. Alignments found:', allProbeAlignments.length);
-      
-      if (allProbeAlignments.length > 0) {
-        searchedAlignments = allProbeAlignments.map((aln, idx) => {
-          const processed = {
-            target_transcript: aln.target_transcript,
-            gene_id: aln.gene_id,
-            mismatches: aln.mismatches,
-            position: aln.position,
-            strand: aln.strand,
-            sequence: aln.sequence,
-            gc_content: calculateGC(aln.sequence)
-          };
-          console.log(`  ${idx + 1}.`, processed.target_transcript, '- mismatches:', processed.mismatches);
-          return processed;
-        });
-        
-        const minMismatches = Math.min(...searchedAlignments.map(a => a.mismatches));
-        if (minMismatches <= 1) {
-          searchedProbe.status = 'high_risk';
-          searchedProbe.mismatches = minMismatches;
-        } else {
-          searchedProbe.status = 'medium_risk';
-          searchedProbe.mismatches = minMismatches;
-        }
-        
-        console.log('✓ searchedAlignments set to:', searchedAlignments.length, 'items');
-      } else {
-        searchedProbe.status = 'safe';
-        console.log('✓ Safe probe - no alignments found');
-      }
-    } catch (error) {
-      console.error('ERROR in searchProbeById:', error);
-      searchError = 'Failed to fetch alignments: ' + error.message;
-      searchedProbe = null;
-    } finally {
-      isSearching = false;
-      console.log('\n✓ Search complete');
-      console.log('Final state:');
-      console.log('  - searchedProbe:', searchedProbe ? searchedProbe.probe_id : 'null');
-      console.log('  - searchedAlignments.length:', searchedAlignments.length);
-      console.log('========================================\n');
-    }
-  }
 
-  function clearSearch() {
-    searchProbeId = '';
-    searchedProbe = null;
-    searchedAlignments = [];
-    searchError = null;
-    loadingProgress = { current: 0, total: 0, percent: 0 };
-  }
   async function fetchSafeProbes() {
     loadingSafeProbes = true;
     try {
@@ -432,6 +353,8 @@
           console.log('Parts:', parts);
           
           if (parts.length >= 11) {
+            const statusParts = parts.slice(10);
+            const status = statusParts.join(' ');
             const probe = {
               rank: parseInt(parts[0]),
               probe_id: parts[1],
@@ -443,7 +366,7 @@
               complexity: parseFloat(parts[7]),
               sec_struct: parseFloat(parts[8]),
               homopolymer: parts[9],
-              status: parts[10]
+              status: status
             };
             
             probes.push(probe);
@@ -465,13 +388,35 @@
 
   function filterSafeProbes() {
     filteredSafeProbes = safeProbes.filter(probe => {
-      if (safeProbeSearch && !probe.probe_id.toLowerCase().includes(safeProbeSearch.toLowerCase())) {
-        return false;
-      } 
-      if (safeProbeMinScore !== null && safeProbeMinScore !== '' && probe.score < parseFloat(safeProbeMinScore)) {
-        return false;
+  
+      if (scoreFilter !== 'all') {
+        if (scoreFilter === '80+' && probe.score < 80) return false;
+        if (scoreFilter === '60-79' && (probe.score < 60 || probe.score >= 80)) return false;
+        if (scoreFilter === '40-59' && (probe.score < 40 || probe.score >= 60)) return false;
+        if (scoreFilter === '<40' && probe.score >= 40) return false;
       }
-      if (safeProbeQuality !== 'all' && probe.status.toLowerCase() !== safeProbeQuality.toLowerCase()) {
+      
+      if (tmFilter !== 'all') {
+        if (tmFilter === '60+' && probe.tm < 60) return false;
+        if (tmFilter === '55-59' && (probe.tm < 55 || probe.tm >= 60)) return false;
+        if (tmFilter === '50-54' && (probe.tm < 50 || probe.tm >= 55)) return false;
+        if (tmFilter === '<50' && probe.tm >= 50) return false;
+      }
+      
+      if (gcFilter !== 'all') {
+        if (gcFilter === '40-50' && (probe.gc_content < 40 || probe.gc_content > 50)) return false;
+        if (gcFilter === '50-60' && (probe.gc_content < 50 || probe.gc_content > 60)) return false;
+        if (gcFilter === '60-70' && (probe.gc_content < 60 || probe.gc_content > 70)) return false;
+        if (gcFilter === '70-80' && (probe.gc_content < 70 || probe.gc_content > 80)) return false;
+      }
+      
+      if (homopolymerFilter !== 'all') {
+        console.log('Homopolymer filter:', homopolymerFilter, 'Probe value:', probe.homopolymer);
+        if (homopolymerFilter === 'no' && probe.homopolymer !== 'No') return false;
+        if (homopolymerFilter === 'yes' && probe.homopolymer === 'No') return false;
+      }
+      
+      if (statusFilter !== 'all' && probe.status.toLowerCase() !== statusFilter.toLowerCase()) {
         return false;
       }
       
@@ -539,29 +484,6 @@
     if (showMicrobiomeSelfAligned && microbiomeSelfAligned.length === 0) {
       await fetchMicrobiomeSelfAligned();
     }
-  }
-
-  function handleSafeProbeSearchInput(event) {
-    safeProbeSearch = event.target.value;
-    filterSafeProbes();
-  }
-
-  function handleMinScoreChange(event) {
-    const value = event.target.value.trim();
-    if (value === '') {
-      safeProbeMinScore = null;
-    } else {
-      const parsed = parseFloat(value);
-      safeProbeMinScore = isNaN(parsed) ? null : parsed;
-    }
-    
-    console.log('Min score changed to:', safeProbeMinScore); 
-    filterSafeProbes();
-  }
-
-  function handleQualityFilterChange(event) {
-    safeProbeQuality = event.target.value;
-    filterSafeProbes();
   }
 
   async function toggleSafeProbes() {
@@ -642,12 +564,6 @@
     safeProbesPageSize = parseInt(event.target.value);
     safeProbesPage = 1;
     filteredSafeProbes = [...filteredSafeProbes]; 
-  }
-
-  function handleSearchKeypress(event) {
-    if (event.key === 'Enter') {
-      searchProbeById();
-    }
   }
 
   function formatSequenceWithHighlights(sequence) {
@@ -982,50 +898,6 @@
         <div transition:slide={{ duration: 300, easing: quintOut }} style="margin-top:12px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
         
           <div style="padding:16px; background:#f9fafb; border-bottom:1px solid #e5e7eb;">
-            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
-              <div>
-                <label for="safe-probe-search" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Search Probe ID</label>
-                <input
-                  id="safe-probe-search"
-                  type="text"
-                  placeholder="Enter probe ID..."
-                  value={safeProbeSearch}
-                  on:input={handleSafeProbeSearchInput}
-                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
-                />
-              </div>
-              
-              <div>
-                <label for="min-score" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Minimum Score</label>
-                <input
-                  id="min-score"
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="5"
-                  placeholder="0-100"
-                  on:input={handleMinScoreChange}
-                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
-                />
-              </div>
-              
-              <div>
-                <label for="quality-filter" style="display:block; font-size:13px; color:#374151; margin-bottom:4px; font-weight:500;">Quality Status</label>
-                <select
-                  id="quality-filter"
-                  on:change={handleQualityFilterChange}
-                  style="width:100%; padding:8px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
-                >
-                  <option value="all">All</option>
-                  <option value="excellent">Excellent</option>
-                  <option value="very good">Very Good</option>
-                  <option value="good">Good</option>
-                  <option value="acceptable">Acceptable</option>
-                  <option value="marginal">Marginal</option>
-                  <option value="rejected">Rejected</option>
-                </select>
-              </div>
-            </div>
             
             <div style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">
               <div style="font-size:13px; color:#6b7280;">
@@ -1052,7 +924,7 @@
               <div class="spinner" style="width:32px; height:32px; margin:0 auto 12px;"></div>
               <p style="color:#6b7280; margin:0;">Loading probe scores...</p>
             </div>
-          {:else if filteredSafeProbes.length > 0}
+          {:else}
             <div style="overflow-x:auto;">
               <table style="width:100%; border-collapse:collapse; font-size:12px;">
                 <thead>
@@ -1060,14 +932,79 @@
                     <th style="padding:10px; text-align:center;">Rank</th>
                     <th style="padding:10px; text-align:left;">Probe ID</th>
                     <th style="padding:10px; text-align:left;">Sequence</th>
-                    <th style="padding:10px; text-align:center;">Score</th>
-                    <th style="padding:10px; text-align:center;">Tm (°C)</th>
-                    <th style="padding:10px; text-align:center;">GC%</th>
+                    <th style="padding:10px; text-align:center; position:relative;">
+                      <div style="margin-bottom:4px;">Score</div>
+                      <select
+                        on:change={(e) => {scoreFilter = e.target.value; filterSafeProbes();}}
+                        value={scoreFilter}
+                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
+                      >
+                        <option value="all">All</option>
+                        <option value="80+">80+</option>
+                        <option value="60-79">60-79</option>
+                        <option value="40-59">40-59</option>
+                        <option value="<40">&lt;40</option>
+                      </select>
+                    </th>
+                    <th style="padding:10px; text-align:center; position:relative;">
+                      <div style="margin-bottom:4px;">Tm (°C)</div>
+                      <select
+                        on:change={(e) => {tmFilter = e.target.value; filterSafeProbes();}}
+                        value={tmFilter}
+                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
+                      >
+                        <option value="all">All</option>
+                        <option value="60+">60+</option>
+                        <option value="55-59">55-59</option>
+                        <option value="50-54">50-54</option>
+                        <option value="<50">&lt;50</option>
+                      </select>
+                    </th>
+                    <th style="padding:10px; text-align:center; position:relative;">
+                      <div style="margin-bottom:4px;">GC%</div>
+                      <select
+                        on:change={(e) => {gcFilter = e.target.value; filterSafeProbes();}}
+                        value={gcFilter}
+                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
+                      >
+                        <option value="all">All</option>
+                        <option value="40-50">40-50%</option>
+                        <option value="50-60">50-60%</option>
+                        <option value="60-70">60-70%</option>
+                        <option value="70-80">70-80%</option>
+                      </select>
+                    </th>
                     <th style="padding:10px; text-align:center;">Length</th>
                     <th style="padding:10px; text-align:center;">Complexity</th>
                     <th style="padding:10px; text-align:center;">Sec. Struct</th>
-                    <th style="padding:10px; text-align:center;">Homopolymer</th>
-                    <th style="padding:10px; text-align:center;">Status</th>
+                    <th style="padding:10px; text-align:center; position:relative;">
+                      <div style="margin-bottom:4px;">Homopolymer</div>
+                      <select
+                        on:change={(e) => {homopolymerFilter = e.target.value; filterSafeProbes();}}
+                        value={homopolymerFilter}
+                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
+                      >
+                        <option value="all">All</option>
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </th>
+                    <th style="padding:10px; text-align:center; position:relative;">
+                      <div style="margin-bottom:4px;">Status</div>
+                      <select
+                        on:change={(e) => {statusFilter = e.target.value; filterSafeProbes();}}
+                        value={statusFilter}
+                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
+                      >
+                        <option value="all">All</option>
+                        <option value="excellent">Excellent</option>
+                        <option value="very good">Very Good</option>
+                        <option value="good">Good</option>
+                        <option value="acceptable">Acceptable</option>
+                        <option value="marginal">Marginal</option>
+                        <option value="rejected">Rejected</option>
+                      </select>
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1178,11 +1115,7 @@
                 Next
               </button>
             </div>
-            
-          {:else}
-            <div style="padding:40px; text-align:center; color:#6b7280;">
-              No probes match the current filters
-            </div>
+
           {/if}
         </div>
       {/if}
