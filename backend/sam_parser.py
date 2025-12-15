@@ -101,7 +101,7 @@ def count_sam_alignments(sam_path: str) -> int:
     """
     count = 0
     try:
-        with open(sam_path, 'r') as f:
+        with open(sam_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if not line.startswith('@'):
                     parts = line.strip().split('\t')
@@ -120,13 +120,13 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
     """
     alignments = []
     skipped = 0
-    sequence_cache = {}  
+    sequence_cache = {}
     if probe_id_filter:
         base_probe_id = probe_id_filter.split('|')[0].strip()
-        probe_numeric = re.search(r'probe_(\d+)', probe_id_filter)
-        probe_num = probe_numeric.group(1) if probe_numeric else None
+        # probe_numeric = re.search(r'probe_(\d+)', probe_id_filter)
+        # probe_num = probe_numeric.group(1) if probe_numeric else None
     try:
-        with open(sam_path, 'r') as f:
+        with open(sam_path, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.startswith('@'):
                     continue
@@ -136,6 +136,11 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                     continue
 
                 qname = parts[0]
+                if probe_id_filter:
+                    qname_base = qname.split('|')[0].strip()
+                    if qname.strip() != probe_id_filter and qname_base != base_probe_id:
+                        continue
+                
                 flag = int(parts[1])
                 rname = parts[2]
 
@@ -212,13 +217,13 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
         sam_file = sys.argv[1]
-        alignments = parse_sam_file(sam_file, limit=10)
+        sample_alignments = parse_sam_file(sam_file, limit=10)
         
         print("\n" + "="*100)
         print(f"{'Probe ID':<15} {'Sequence':<25} {'Target':<20} {'Gene':<15} {'MM':<5} {'Pos':<8} {'Strand':<6}")  
         print("="*100)
         
-        for aln in alignments:
+        for aln in sample_alignments:
             print(f"{aln['probe_id']:<15} {aln['sequence']:<25} {aln['target_transcript']:<20} "
             f"{(aln.get('gene_id') or '-'):<15} {aln['mismatches']:<5} {aln['position']:<8} {aln['strand']:<6}")  
 

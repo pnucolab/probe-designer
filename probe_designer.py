@@ -30,6 +30,7 @@ from datetime import datetime
 import tempfile
 import traceback
 from pathlib import Path
+import shutil
 from Bio import SeqIO
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
 from score_probes import score_and_save_probes
@@ -44,7 +45,6 @@ DEFAULT_DIRS = {
     'gene': 'gene_sequences',
     'probe': 'probe_sequences'
 }
-
 class samannotator:
     """SAM annotator """
     
@@ -76,7 +76,7 @@ class samannotator:
             return None
         
         try:
-            with open(cache_file, 'r') as f:
+            with open(cache_file, 'r', encoding='utf-8') as f:
                 first_line = f.readline().strip()
                 if first_line.startswith('#') and 'release_' in first_line:
                     match = re.search(r'release_(\d+)', first_line)
@@ -91,7 +91,7 @@ class samannotator:
             return False
         
         start = time.time()
-        with open(cache_file, 'r') as f:
+        with open(cache_file, 'r', encoding='utf-8') as f:
             next(f)  
             for line in f:
                 parts = line.strip().split('\t')
@@ -109,7 +109,7 @@ class samannotator:
         transcript_pattern = re.compile(r'transcript_id "([^"]+)"')
         gene_pattern = re.compile(r'gene_name "([^"]+)"')
         
-        with open(gtf_file, 'r') as f:
+        with open(gtf_file, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.startswith('#'):
                     continue
@@ -124,7 +124,7 @@ class samannotator:
         elapsed = time.time() - start
         print(f"Extracted {len(self.mappings):,} mappings in {elapsed:.2f}s")
         
-        with open(cache_file, 'w') as f:
+        with open(cache_file, 'w', encoding='utf-8') as f:
             f.write(f"# Transcript to gene mappings from release_{release}\n")
             for tid, gname in self.mappings.items():
                 f.write(f"{tid}\t{gname}\n")
@@ -169,7 +169,7 @@ class samannotator:
         annotated = 0
         headers = 0
         
-        with open(input_sam, 'r') as infile, open(output_sam, 'w') as outfile:
+        with open(input_sam, 'r', encoding='utf-8') as infile, open(output_sam, 'w', encoding='utf-8') as outfile:
             for line in infile:
                 processed += 1
                 
@@ -302,7 +302,7 @@ def run(cmd, description, check_output_file=None):
     print(f"{description} completed in {dur:.1f}s")
     return True
 
-def annotate_microbiome_sam(sam_file, species, output_base):
+def annotate_microbiome_sam(sam_file, species, _, align_host=False):
     """Add species annotations to SAM file for microbiome data."""
     metadata_file = os.path.join('data', species, 'genomes-all_metadata.tsv')
     
@@ -335,8 +335,15 @@ def annotate_microbiome_sam(sam_file, species, output_base):
     annotated_sam = sam_file.replace('.sam', '_annotated.sam')
     
     try:
+        transcript_to_gene = {}
+        if align_host:
+            host_species = 'human' if species in ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome'] else 'mouse'
+            ann = samannotator()
+            ann._ensure_mappings_loaded(host_species)
+            transcript_to_gene = ann.mappings
+
         with open(sam_file, 'r', encoding='utf-8') as inf, \
-             open(annotated_sam, 'w', encoding='utf-8') as outf:
+            open(annotated_sam, 'w', encoding='utf-8') as outf:
             
             for line in inf:
                 if line.startswith('@'):
@@ -345,8 +352,16 @@ def annotate_microbiome_sam(sam_file, species, output_base):
                     parts = line.strip().split('\t')
                     if len(parts) >= 11:
                         rname = parts[2]
-                        genome = rname.split('_')[0] if '_' in rname else rname
-                        species_name = genome_to_species.get(genome, 'Unknown')
+                        
+                        if rname.startswith('MGYG'):
+                            genome = rname.split('_')[0] if '_' in rname else rname
+                            species_name = genome_to_species.get(genome, 'Unknown')
+                        elif rname.startswith('ENST') or rname.startswith('ENSMUST'):
+                            transcript_base = rname.split('.')[0]
+                            species_name = transcript_to_gene.get(transcript_base, transcript_to_gene.get(rname, 'Unknown'))
+                        else:
+                            species_name = 'Unknown'
+                        
                         outf.write(line.strip() + f'\tSP:Z:{species_name}\n')
                     else:
                         outf.write(line)
@@ -358,166 +373,238 @@ def annotate_microbiome_sam(sam_file, species, output_base):
         print(f"Error annotating SAM file: {e}")
         return False
 def generate_14mers(sequence):
-        """Generate all possible 14-mers from a sequence."""
-        return [sequence[i:i+14] for i in range(len(sequence) - 13)]
+    """Generate all possible 14-mers from a sequence."""
+    return [sequence[i:i+14] for i in range(len(sequence) - 13)]
     
 def check_14mer_safety(probes_file, species, output_base, args):
-        """Check if 14-mers from non-aligned probes have genome matches."""
-        print("\nChecking 14-mer safety for non-aligned probes...")
-        probes = list(SeqIO.parse(probes_file, "fasta"))
-        if not probes:
-            return probes_file
-        
-        # Initialize annotator for gene name lookup
-        annotator = samannotator() if species not in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"] else None
-        if annotator:
-            annotator._ensure_mappings_loaded(species)
-        
-        all_14mers = []
-        probe_to_14mers = {}
-        mer_to_probe = {}  
-        
-        for record in probes:
-            probe_14mers = generate_14mers(str(record.seq))
-            probe_to_14mers[record.id] = probe_14mers
-            for i, mer in enumerate(probe_14mers):
-                mer_id = f"14mer_{len(all_14mers)}"
-                all_14mers.append(mer)
-                mer_to_probe[mer_id] = (record.id, i, mer)  
-        
-        print(f"Generated {len(all_14mers)} 14-mers from {len(probes)} probes")
-        
-        temp_14mer_file = f'{output_base}/temp_14mers.fa'
-        with open(temp_14mer_file, 'w') as f:
-            for i, mer in enumerate(all_14mers):
-                f.write(f">14mer_{i}\n{mer}\n")
-        
-        if species in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"]:
-            chrom_dir = os.path.join('data', species)
-        else:
-            chrom_dir = os.path.join('data', 'gencode_data', species, 'transcript_chunks')
-        
-        chrom_files = [os.path.join(chrom_dir, f) for f in os.listdir(chrom_dir) if f.endswith('.fa') or f.endswith('.fna')]
-        
-        razers = os.path.join('bin', 'razers3')
-        align_dir_14mer = f'{output_base}/14mer_align'
-        os.makedirs(align_dir_14mer, exist_ok=True)
-        
-        match_details = []  
-        
-        def align_14mer_chrom(chrom_fasta):
-            base = os.path.splitext(os.path.basename(chrom_fasta))[0]
-            out_sam = os.path.join(align_dir_14mer, f'{base}_14mer.sam')
-            cmd = [razers, '-ng', '-i', '100', '-rr', '100', '-m', '100', '-tc', '1', '-o', out_sam, chrom_fasta, temp_14mer_file]
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    """Check if 14-mers from non-aligned probes have genome matches."""
+    print("\nChecking 14-mer safety for non-aligned probes...")
+    probes = list(SeqIO.parse(probes_file, "fasta"))
+    if not probes:
+        return probes_file
+    
+    # Initialize annotator for gene name lookup
+    annotator = samannotator() if species not in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"] else None
+    if annotator:
+        annotator._ensure_mappings_loaded(species)
+    
+    all_14mers = []
+    probe_to_14mers = {}
+    mer_to_probe = {}
+    unique_mer_map = {}
+    
+    for record in probes:
+        probe_14mers = generate_14mers(str(record.seq))
+        probe_to_14mers[record.id] = probe_14mers
+        for i, mer in enumerate(probe_14mers):
+            if mer not in unique_mer_map:
+                unique_mer_map[mer] = []
+            unique_mer_map[mer].append((record.id, i))
+    
+    
+    for mer_seq, probe_list in unique_mer_map.items():
+        mer_id = f"14mer_{len(all_14mers)}"
+        all_14mers.append(mer_seq)
+        mer_to_probe[mer_id] = probe_list
+    
+    total_mers = sum(len(v) for v in unique_mer_map.values())
+    print(f"Generated {len(all_14mers)} unique 14-mers from {len(probes)} probes")
+    print(f"  Total 14-mers: {total_mers}, Unique: {len(all_14mers)}, Duplicates removed: {total_mers - len(all_14mers)} ({(total_mers-len(all_14mers))/total_mers*100:.1f}%)")
+    
+    temp_14mer_file = f'{output_base}/temp_14mers.fa'
+    with open(temp_14mer_file, 'w', encoding='utf-8') as f:
+        for i, mer in enumerate(all_14mers):
+            f.write(f">14mer_{i}\n{mer}\n")
+    
+    microbiome_species_list = ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", 
+                            "human-vaginal-microbiome", "mouse-gut-microbiome"]
+
+    chrom_files = []
+
+    if species in microbiome_species_list:
+        if args.align_microbiome:
+            microbiome_dir = os.path.join('data', species)
+            if os.path.exists(microbiome_dir):
+                chrom_files = [os.path.join(microbiome_dir, f) for f in os.listdir(microbiome_dir) 
+                            if f.endswith('.fa') or f.endswith('.fna')]
+        elif args.align_host:
+            if species == "mouse-gut-microbiome":
+                host_dir = os.path.join('data', 'gencode_data', 'mouse', 'transcript_chunks')
+            else:
+                host_dir = os.path.join('data', 'gencode_data', 'human', 'transcript_chunks')
             
-            local_matches = []
-            if proc.returncode == 0 and os.path.exists(out_sam):
-                with open(out_sam, 'r') as f:
-                    for line in f:
-                        if not line.startswith('@'):
-                            parts = line.split('\t')
-                            if len(parts) >= 4:
-                                mer_id = parts[0]  
-                                chromosome = parts[2]  
-                                position = parts[3] 
-                                local_matches.append((mer_id, chromosome, position))
-            return local_matches
+            if os.path.exists(host_dir):
+                chrom_files = [os.path.join(host_dir, f) for f in os.listdir(host_dir) if f.endswith('.fa')]
+    else:
+        chrom_dir = os.path.join('data', 'gencode_data', species, 'transcript_chunks')
+        if os.path.exists(chrom_dir):
+            chrom_files = [os.path.join(chrom_dir, f) for f in os.listdir(chrom_dir) if f.endswith('.fa')]
+
+    if not chrom_files:
+        print("Warning: No genome files found for 14-mer safety check")
+        return probes_file
+    
+    razers = os.path.join('bin', 'razers3')
+    align_dir_14mer = f'{output_base}/14mer_align'
+    os.makedirs(align_dir_14mer, exist_ok=True)
+    
+    match_details = []  
+    
+    def align_14mer_chrom(chrom_fasta):
+        base = os.path.splitext(os.path.basename(chrom_fasta))[0]
+        out_sam = os.path.join(align_dir_14mer, f'{base}_14mer.sam')
+        cmd = [razers, '-ng', '-i', '100', '-rr', '100', '-m', '100', '-tc', '1', '-o', out_sam, chrom_fasta, temp_14mer_file]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         
-        print("Aligning 14-mers to genome...")
-        with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism or cpu_count()) as ex:
-            futures = [ex.submit(align_14mer_chrom, cf) for cf in chrom_files]
-            for fut in concurrent.futures.as_completed(futures):
-                match_details.extend(fut.result())
-        
-        print(f"Found {len(match_details)} 14-mer matches")
-        
-        # Organize matches by probe with deduplication
-        probe_matches = {}  
-        unsafe_probes = set()
-        
-        for mer_id, chromosome, position in match_details:
-            if mer_id in mer_to_probe:
-                probe_id, mer_pos, mer_seq = mer_to_probe[mer_id]
+        local_matches = []
+        if proc.returncode == 0 and os.path.exists(out_sam):
+            with open(out_sam, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if not line.startswith('@'):
+                        parts = line.split('\t')
+                        if len(parts) >= 4:
+                            mer_id = parts[0]  
+                            chromosome = parts[2]  
+                            position = parts[3] 
+                            local_matches.append((mer_id, chromosome, position))
+        return local_matches
+    
+    print("Aligning 14-mers to genome...")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism or cpu_count()) as ex:
+        futures = [ex.submit(align_14mer_chrom, cf) for cf in chrom_files]
+        for fut in concurrent.futures.as_completed(futures):
+            match_details.extend(fut.result())
+    
+    print(f"Found {len(match_details)} 14-mer matches")
+    
+    # Organize matches by probe - simplified for large match sets
+    organizing_start = time.time()
+    unsafe_probes = set()
+    probe_match_count = {}
+    
+    print("Processing matches to identify unsafe probes...")
+    for mer_id, _, _ in match_details:
+        if mer_id in mer_to_probe:
+            probe_list = mer_to_probe[mer_id]
+            for probe_id, _ in probe_list:
                 unsafe_probes.add(probe_id)
-                
-                if probe_id not in probe_matches:
-                    probe_matches[probe_id] = []
-                
-                # Check if this exact match already exists to avoid duplicates
-                already_exists = any(
-                    m['mer_sequence'] == mer_seq and 
-                    m['mer_position'] == mer_pos and 
-                    m['chromosome'] == chromosome and 
-                    m['genome_position'] == position 
-                    for m in probe_matches[probe_id]
-                )
-                
-                if not already_exists:
-                    # Get gene name if annotator is available
-                    gene_name = annotator.mappings.get(chromosome, chromosome) if annotator else chromosome
-                    
-                    probe_matches[probe_id].append({
-                        'mer_sequence': mer_seq,
-                        'mer_position': mer_pos,
-                        'chromosome': chromosome,
-                        'gene_name': gene_name,
-                        'genome_position': position
-                    })
-                    
-        match_report_file = f'{output_base}/14mer_matches_report.txt'
-        with open(match_report_file, 'w') as f:
-            f.write("14-mer Match Report\n")
-            f.write("==================\n\n")
-            f.write(f"Total probes checked: {len(probes)}\n")
-            f.write(f"Unsafe probes (with 14-mer matches): {len(unsafe_probes)}\n")
-            f.write(f"Safe probes: {len(probes) - len(unsafe_probes)}\n\n")
+                probe_match_count[probe_id] = probe_match_count.get(probe_id, 0) + 1
+    
+    organizing_elapsed = time.time() - organizing_start
+    print(f"Match organization took {organizing_elapsed:.2f}s")
+    print(f"  Unsafe probes identified: {len(unsafe_probes)}")
+    print(f"  Total matches processed: {len(match_details):,}")
+    
+    report_start = time.time()
+    match_report_file = f'{output_base}/14mer_matches_report.txt'
+    with open(match_report_file, 'w', encoding='utf-8') as f:
+        f.write("14-mer Match Report (Simplified)\n")
+        f.write("=" * 80 + "\n\n")
+        f.write(f"Total probes checked: {len(probes)}\n")
+        f.write(f"Unsafe probes (with 14-mer matches): {len(unsafe_probes)}\n")
+        f.write(f"Safe probes: {len(probes) - len(unsafe_probes)}\n")
+        f.write(f"Total 14-mer matches found: {len(match_details):,}\n\n")
+        f.write("Note: Detailed match information omitted due to large dataset size.\n")
+        f.write("Unsafe probe IDs and match counts:\n\n")
+        for probe_id in sorted(unsafe_probes):
+            f.write(f"{probe_id}: {probe_match_count[probe_id]} matches\n")
+    
+    report_elapsed = time.time() - report_start
+    print(f"Report generation took {report_elapsed:.2f}s")
+    
+    safe_probes_file = f'{output_base}/safe_probes.fa'
+    safe_probes = [p for p in probes if p.id not in unsafe_probes]
+    
+    # Secondary check: ONLY runs if user selected BOTH
+    host_species = None
+    if species in microbiome_species_list and args.align_microbiome and args.align_host:
+        if species == "mouse-gut-microbiome":
+            host_species = "mouse"
+        else:
+            host_species = "human"
+        
+        print(f"\nSecondary safety check: Aligning safe probe 14-mers against {host_species} transcripts...")
+        
+    if host_species:
+        safe_probe_ids = {p.id for p in safe_probes}
+        safe_14mers = []
+        safe_mer_to_probe = {}
+        
+        for mer_id, probe_list in mer_to_probe.items():
+            mer_seq = all_14mers[int(mer_id.split('_')[1])]
+            safe_probes_for_this_mer = [(pid, pos) for pid, pos in probe_list if pid in safe_probe_ids]
             
-            if unsafe_probes:
-                f.write("UNSAFE PROBES WITH MATCH DETAILS:\n")
-                f.write("=" * 120 + "\n\n")
+            if safe_probes_for_this_mer:
+                safe_14mers.append(mer_seq)
+                new_mer_id = f"safe_14mer_{len(safe_14mers)-1}"
+                safe_mer_to_probe[new_mer_id] = safe_probes_for_this_mer
+        
+        print(f"  Using {len(safe_14mers)} pre-generated 14-mers from {len(safe_probes)} safe probes")
+        
+        # Write safe 14-mers to temp file
+        temp_safe_14mer = f'{output_base}/temp_safe_14mers.fa'
+        with open(temp_safe_14mer, 'w', encoding='utf-8') as f:
+            for i, mer in enumerate(safe_14mers):
+                f.write(f">safe_14mer_{i}\n{mer}\n") 
+        
+        host_chrom_dir = os.path.join('data', 'gencode_data', host_species, 'transcript_chunks')
+        if os.path.exists(host_chrom_dir):
+            host_chrom_files = [os.path.join(host_chrom_dir, f) for f in os.listdir(host_chrom_dir) if f.endswith('.fa')]
+            
+            host_align_dir = f'{output_base}/14mer_host_align'
+            os.makedirs(host_align_dir, exist_ok=True)
+            
+            host_matches = []
+            
+            def align_safe_14mer_host(chrom_fasta):
+                base = os.path.splitext(os.path.basename(chrom_fasta))[0]
+                out_sam = os.path.join(host_align_dir, f'{base}_safe_14mer.sam')
+                cmd = [razers, '-ng', '-i', '100', '-rr', '100', '-m', '100', '-tc', '1', '-o', out_sam, chrom_fasta, temp_safe_14mer]
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
                 
-                for probe_id in sorted(unsafe_probes):
-                    probe_seq = None
-                    for record in probes:
-                        if record.id == probe_id:
-                            probe_seq = str(record.seq)
-                            break
-                    
-                    f.write(f"Probe ID: {probe_id}\n")
-                    f.write(f"Sequence: {probe_seq}\n")
-                    f.write(f"Total matches: {len(probe_matches[probe_id])}\n\n")
-                    
-                    f.write(f"{'14-mer Sequence':<16} {'Position':<12} {'Transcript/Location':<30} {'Gene Name':<20} {'Genome Position':<15}\n")
-                    f.write("-" * 120 + "\n")
-                    
-                    sorted_matches = sorted(probe_matches[probe_id], key=lambda x: x['mer_position'])
-                    
-                    for match in sorted_matches:
-                        mer_seq = match['mer_sequence']
-                        mer_pos = f"{match['mer_position']}-{match['mer_position']+13}"
-                        chromosome = match['chromosome']
-                        gene_name = match['gene_name'] if match['gene_name'] != match['chromosome'] else "-"
-                        genome_pos = str(match['genome_position'])
-                        
-                        f.write(f"{mer_seq:<16} {mer_pos:<12} {chromosome:<30} {gene_name:<20} {genome_pos:<15}\n")
-                    
-                    f.write("\n" + "=" * 120 + "\n\n")
-        
-        safe_probes_file = f'{output_base}/safe_probes.fa'
-        safe_probes = [p for p in probes if p.id not in unsafe_probes]
-        SeqIO.write(safe_probes, safe_probes_file, "fasta")
-        
-        print("Safety check results:")
-        print(f"  Total non-aligned probes: {len(probes)}")
-        print(f"  Unsafe probes (have 14-mer matches): {len(unsafe_probes)}")
-        print(f"  Safe probes: {len(safe_probes)}")
-        print(f"  Safe probes written to: {safe_probes_file}")
-        print(f"  Match details report: {match_report_file}")
-        
-        os.remove(temp_14mer_file)
-        
-        return safe_probes_file
+                local_matches = []
+                if proc.returncode == 0 and os.path.exists(out_sam):
+                    with open(out_sam, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            if not line.startswith('@'):
+                                parts = line.split('\t')
+                                if len(parts) >= 4:
+                                    local_matches.append((parts[0], parts[2], parts[3]))
+                return local_matches
+            
+            with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism or cpu_count()) as ex:
+                futures = [ex.submit(align_safe_14mer_host, cf) for cf in host_chrom_files]
+                for fut in concurrent.futures.as_completed(futures):
+                    host_matches.extend(fut.result())
+            
+            host_unsafe = set()
+            for mer_id, _, _ in host_matches:
+                if mer_id in safe_mer_to_probe:
+                    for probe_id, _ in safe_mer_to_probe[mer_id]:
+                        host_unsafe.add(probe_id)
+            
+            # Filter out probes with host matches
+            safe_probes = [p for p in safe_probes if p.id not in host_unsafe]
+            
+            print(f"  Probes matching {host_species} transcripts: {len(host_unsafe)}")
+            print(f"  Final safe probes after {host_species} check: {len(safe_probes)}")
+            
+            os.remove(temp_safe_14mer)
+        else:
+            print(f"  Warning: {host_species.capitalize()} transcript directory not found, skipping host check")
+    
+    SeqIO.write(safe_probes, safe_probes_file, "fasta")
+    
+    print("Safety check results:")
+    print(f"  Total non-aligned probes: {len(probes)}")
+    print(f"  Unsafe probes (have 14-mer matches): {len(unsafe_probes)}")
+    print(f"  Safe probes: {len(safe_probes)}")
+    print(f"  Safe probes written to: {safe_probes_file}")
+    print(f"  Match details report: {match_report_file}")
+    
+    os.remove(temp_14mer_file)
+    
+    return safe_probes_file
     
 
 def main():
@@ -537,6 +624,10 @@ def main():
     parser.add_argument("--task-id", help="Task ID for organizing outputs")
     parser.add_argument("--skip-annotation", action="store_true",
                        help="Skip gene name annotation of SAM files")
+    parser.add_argument("--align-microbiome", action="store_true", default=False,
+                   help="Align against microbiome genomes")
+    parser.add_argument("--align-host", action="store_true", default=False,
+                    help="Align against host transcriptome")
     
     args = parser.parse_args()
     if args.gene_sequence_stdin:
@@ -649,7 +740,22 @@ def main():
     align_dir = f'{output_base}/chroms'
 
     if args.species in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"]:
-        chrom_dir = os.path.join('data', args.species)
+        microbiome_dir = os.path.join('data', args.species)
+        if args.species == "mouse-gut-microbiome":
+            host_dir = os.path.join('data', 'gencode_data', 'mouse', 'transcript_chunks')
+        else:
+            host_dir = os.path.join('data', 'gencode_data', 'human', 'transcript_chunks')
+        dirs = []
+        if args.align_microbiome:
+            dirs.append(microbiome_dir)
+        if args.align_host and os.path.exists(host_dir):
+            dirs.append(host_dir)
+        
+        if not dirs:
+            print("Error: At least one alignment target must be selected for microbiome species")
+            return False
+        
+        chrom_dir = ':'.join(dirs)
     else:
         chrom_dir = os.path.join('data', 'gencode_data', args.species, 'transcript_chunks')
 
@@ -693,12 +799,14 @@ def main():
     if parallelism is None or parallelism <= 0:
         parallelism = cpu_count()
 
-    if not os.path.exists(chrom_dir):
-        print(f"Chromosome chunks directory not found: {chrom_dir}")
-        print("Chromosomes should have been created during genome download")
-        return False
+    chrom_dirs = chrom_dir.split(':')
+    existing_chroms = []
+    for dir_path in chrom_dirs:
+        if not os.path.exists(dir_path):
+            print(f"Warning: Directory not found: {dir_path}")
+            continue
+        existing_chroms.extend([os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith('.fa') or f.endswith('.fna')])
 
-    existing_chroms = [os.path.join(chrom_dir, f) for f in os.listdir(chrom_dir) if f.endswith('.fa') or f.endswith('.fna')]
     if not existing_chroms:
         print(f"No chromosome files found in {chrom_dir}")
         return False
@@ -776,7 +884,8 @@ def main():
     total = 0
     kept = 0
     skipped_no_nm = 0
-    aligned_probes = set()  
+    aligned_probes = set()
+    self_alignments = 0  
     non_aligned_probes_fa = f'{output_base}/non_aligned_probes.fa'
 
     with open(sam_out, 'r', encoding='utf-8') as inf, \
@@ -791,7 +900,11 @@ def main():
                 continue
 
             qname = parts[0]
-            aligned_probes.add(qname)  
+            aligned_probes.add(qname)
+            # Count self-alignments
+            probe_source = qname.split('|')[-1].replace('transcript:', '')
+            if probe_source in parts[2]:
+                self_alignments += 1  
 
             m = nm_pattern.search(line)
             if not m:
@@ -806,29 +919,35 @@ def main():
     microbiome_species = ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", 
                       "human-vaginal-microbiome", "mouse-gut-microbiome"]
     if args.species in microbiome_species:
-        annotate_microbiome_sam(filtered_sam, args.species, output_base)
+        annotate_microbiome_sam(filtered_sam, args.species, output_base, args.align_host)
 
     print("\nExtracting non-aligned probes...")
     non_aligned_count = 0
     candidate_probes = list(SeqIO.parse(probes_out, "fasta"))
 
     is_microbiome = args.species in microbiome_species
-    if annotator and not is_microbiome:
+    if is_microbiome and args.align_host:
+        host_species = 'human' if args.species in ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome'] else 'mouse'
+        
+        temp_sam = filtered_sam.replace('filtered_probe_alignments.sam', 'filtered_probe_alignments_temp.sam')
+        annotator.annotate_sam(annotated_sam, temp_sam, host_species)
+        shutil.move(temp_sam, annotated_sam) 
+
+    elif annotator and not is_microbiome:
         annotator.annotate_sam(filtered_sam, annotated_sam, args.species)
-    
+
     sam_to_analyze = annotated_sam if os.path.exists(annotated_sam) else filtered_sam
+
     probe_classifications = classify_probes_from_sam(sam_to_analyze, is_microbiome=is_microbiome)
-    
+    # Count self-aligning vs off-target probes
+    self_aligning_probes = sum(1 for p_id, data in probe_classifications.items() if data['status'] == 'safe')
+    off_target_probes = len(aligned_probes) - self_aligning_probes 
+
     print("\nExtracting non-aligned probes...")
     
     with open(non_aligned_probes_fa, 'w', encoding='utf-8') as non_aligned_out:
         for record in candidate_probes:
-            probe_id_full = record.id
-            probe_id_match = re.search(r'probe_\d+', probe_id_full)
-            if probe_id_match:
-                probe_id = probe_id_match.group(0)
-            else:
-                probe_id = probe_id_full
+            probe_id = record.id
             
             if probe_id not in probe_classifications:
                 SeqIO.write(record, non_aligned_out, "fasta")
@@ -840,8 +959,11 @@ def main():
     print("\nFiltering summary:")
     print(f"Total alignments scanned: {total:,}")
     print(f"Kept in filtered (NM<={args.max_mismatches}): {kept:,}")
+    print(f"Self-alignments: {self_alignments:,}")
     print(f"Total candidate probes: {len(candidate_probes):,}")
     print(f"Aligned probes found: {len(aligned_probes):,}")
+    print(f"  - Self-alignments only: {self_aligning_probes:,}")
+    print(f"  - Off-target alignments: {off_target_probes:,}")
     print(f"Initial safe probes: {non_aligned_count:,}")
     print(f"Skipped (no NM tag): {skipped_no_nm:,}")
     
@@ -853,7 +975,6 @@ def main():
         safe_probes_file = check_14mer_safety(non_aligned_probes_fa, args.species, output_base, args)
         
         print("\nUpdating non-aligned probes file to contain only safe probes...")
-        import shutil
         shutil.copy2(safe_probes_file, non_aligned_probes_fa)
         
         updated_count = len(list(SeqIO.parse(safe_probes_file, 'fasta')))
@@ -869,11 +990,11 @@ def main():
             score_and_save_probes(safe_probes_file, safe_scores_csv)
         else:
             print("\nNo safe probes to score - creating empty score file...")
-            with open(safe_scores_csv, 'w') as f:
+            with open(safe_scores_csv, 'w', encoding='utf-8') as f:
                 f.write("No safe probes found after 14-mer safety check\n")
         
             safe_scores_txt = safe_scores_csv.replace('.csv', '.txt')
-            with open(safe_scores_txt, 'w') as f:
+            with open(safe_scores_txt, 'w', encoding='utf-8') as f:
                 f.write("No safe probes found after 14-mer safety check\n")
     else:
         print(f"Non-aligned probes: {final_safe_count:,}")
@@ -903,6 +1024,20 @@ def main():
         print(f'Safe probes FASTA: {safe_probes_file}')
         print(f'Safe probes scores: {safe_scores_csv}')
         print(f'14-mer match report: {output_base}/14mer_matches_report.txt')
+    
+    cleanup_dirs = [
+        os.path.join(output_base, '14mer_align'),
+        os.path.join(output_base, 'chroms'),
+        os.path.join(output_base, '14mer_host_align')
+    ]
+    
+    for cleanup_dir in cleanup_dirs:
+        if os.path.exists(cleanup_dir):
+            shutil.rmtree(cleanup_dir)
+
+    print('\n' + '='*80)
+    print('PIPELINE COMPLETED SUCCESSFULLY')
+    print('='*80)
     return True
 
 

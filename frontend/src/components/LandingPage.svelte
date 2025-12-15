@@ -10,7 +10,9 @@
        SoloMicrobe
     </h1>
     <h3 class="subtitle">Design highly specific oligonucleotide probes for microbial genomes</h3>
-    
+    <div class="license-notice">
+     <p class="license-text">SoloMicrobe is freely available under <strong>GNU AGPL</strong> license for all users, including commercial use</p>
+    </div>
     <div class="image-container">
       <img src="/genome-mixing.png" alt="Genome mixing illustration" class="hero-image" />
       <div class="image-overlay">

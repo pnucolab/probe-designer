@@ -764,3 +764,30 @@
     font-size: 1rem;
   }
 }
+
+.license-notice {
+  background: #f3f4f6;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  margin: 1rem 0;
+  text-align: left;
+}
+
+@media (min-width: 768px) {
+  .license-notice {
+    padding: 1.25rem 2rem;
+  }
+}
+
+.license-text {
+  font-size: 0.9rem;
+  color: #4b5563;
+  margin: 0;
+  line-height: 1.6;
+}
+
+@media (min-width: 768px) {
+  .license-text {
+    font-size: 0.95rem;
+  }
+}

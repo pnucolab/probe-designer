@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir):
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, align_microbiome=False, align_host=False):
     """
     Run the probe design pipeline.
     
@@ -52,6 +52,8 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
         input_type: Type of input (gene_sequence or probe_sequence)
         input_file: Filename of the saved input
         storage_dir: Directory where input file is stored
+        align_microbiome: Whether to align against microbiome genomes (for microbiome species)
+        align_host: Whether to align against host transcriptome (for microbiome species)
     """
     logger.info("Starting pipeline task %s", job_id)
     logger.info("Input type: %s, File: %s, Storage: %s", input_type, input_file, storage_dir)
@@ -88,6 +90,21 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             "--max-mismatches", str(max_mismatches),
             "--task-id", job_id,
         ]
+        if align_microbiome:
+            cmd.append("--align-microbiome")
+        if align_host:
+            cmd.append("--align-host")
+
+        stdin_data = None
+        if input_type == "gene_sequence":
+            cmd.extend(["--probe-length", str(probe_length)])
+            cmd.extend(["--gene-sequence-stdin"])
+            stdin_data = sequence_content
+        elif input_type == "probe_sequence":
+            cmd.extend(["--probe-sequence-stdin"])
+            stdin_data = sequence_content
+        else:
+            raise ValueError(f"Unknown input type: {input_type}")
         
         stdin_data = None
         if input_type == "gene_sequence":

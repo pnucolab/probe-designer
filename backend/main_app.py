@@ -264,6 +264,8 @@ async def create_job(
     max_mismatches: int = Form(2),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
+    align_microbiome: str = Form("false"),
+    align_host: str = Form("false"), 
 ):
     
     input_type = 'gene' if gene_sequence.strip() else ('probe' if probe_sequence.strip() else 'none')
@@ -347,6 +349,8 @@ async def create_job(
         'input_type': input_type,
         'input_file': dest_name,
         'storage_dir': str(storage_dir),
+        'align_microbiome': align_microbiome.lower() == 'true',
+        'align_host': align_host.lower() == 'true',
     }
     
     try:

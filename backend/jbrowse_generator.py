@@ -114,9 +114,6 @@ class JBrowseFileGenerator:
         aligned_sam_file: Path
     ) -> List[Dict]:
         """Parse probe regions and classify risk using shared classifier."""
-        
-        # Import shared classifier
-        import sys
         sys.path.insert(0, str(Path(__file__).parent))
         
         # Detect if this is microbiome data by checking for SP:Z: tags
@@ -140,40 +137,37 @@ class JBrowseFileGenerator:
         
         # Parse probe regions from FASTA
         probe_regions = []
-        
+    
         with open(candidate_probes_file, 'r', encoding='utf-8') as f:
             for line in f:
                 if line.startswith('>'):
-                    header = line.strip()[1:]
+                    header = line.strip()[1:]  
                     probe_id_match = re.search(r'probe_\d+', header)
                     start_match = re.search(r'start=(\d+)', header)
                     end_match = re.search(r'end=(\d+)', header)
                     
                     if probe_id_match and start_match and end_match:
-                        probe_id = probe_id_match.group(0)
+                        probe_id_display = probe_id_match.group(0)  
+                        full_probe_id = header  
                         start = int(start_match.group(1))
                         end = int(end_match.group(1))
-                        
-                        # Get classification from shared classifier
-                        if probe_id in probe_classifications:
-                            classification = probe_classifications[probe_id]
+                        if full_probe_id in probe_classifications:
+                            classification = probe_classifications[full_probe_id]
                             status = classification['status']
                             mismatches = classification['min_mismatches']
                         else:
-                            # Probe not in SAM = no alignments = safe
                             status = 'safe'
                             mismatches = None
                         
                         probe_regions.append({
-                            "probe_id": probe_id,
-                            "start": start,
-                            "end": end,
-                            "status": status,
-                            "mismatches": mismatches
-                        })
-        
+                            "probe_id": probe_id_display,  # Use short ID for display
+                        "start": start,
+                        "end": end,
+                        "status": status,
+                        "mismatches": mismatches
+                    })
         return probe_regions
-    
+
     def generate_probes_gff3(
         self, 
         probe_regions: List[Dict], 
@@ -214,7 +208,7 @@ class JBrowseFileGenerator:
                 if probe['status'] in color_map:
                     attributes.append(f"color={color_map[probe['status']]}")
                 desc_map = {
-                    'high_risk': f"High risk: {probe['mismatches']} mismatch(es)",
+                    'high_risk': f"High risk: {probe['mismatches']} mismatch(es)" if probe['mismatches'] is not None else "High risk: Off-target alignment",
                     'medium_risk': f"Medium risk: {probe['mismatches']} mismatches",
                     'safe': "Safe: No off-target alignments"
                 }

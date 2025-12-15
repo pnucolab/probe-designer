@@ -24,15 +24,9 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False) -> Dict
             if len(parts) < 11:
                 continue
             
-            probe_id_full = parts[0]
-            probe_id_match = re.search(r'probe_\d+', probe_id_full)
-            if probe_id_match:
-                probe_id = probe_id_match.group(0)
-            else:
-                probe_id = probe_id_full
-            
-            # Extract gene name from the 4th column (assuming it's there from annotation)
-            target_info = parts[2]  # This is the reference/transcript
+            probe_id = parts[0]
+            target_info = parts[2]  
+
             gene_name = None
             if len(parts) > 3:
                 # Try to get gene name from the 4th column if it exists
@@ -59,9 +53,10 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False) -> Dict
                     'total': 0,
                     'min_mm': float('inf'),
                     'unique_genes': set(),
-                    'is_microbiome_species': False
+                    'is_microbiome_species': False,
+                    'targets': []
                 }
-            
+            probe_data[probe_id]['targets'].append(target_info) 
             probe_data[probe_id]['total'] += 1
             probe_data[probe_id]['min_mm'] = min(probe_data[probe_id]['min_mm'], mismatches)
             probe_data[probe_id]['unique_genes'].add(gene_name)
@@ -73,12 +68,39 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False) -> Dict
     for probe_id, data in probe_data.items():
         unique_gene_count = len(data['unique_genes'])
         
-        # For microbiome: safe if single species alignment
-        if data['is_microbiome_species'] and data['total'] == 1 and data['min_mm'] <= 2:
-            status = 'safe'
-        # For regular species: safe if aligns to only one gene (even multiple transcripts)
+        # For microbiome: check if ANY alignment is to a different species
+        if is_microbiome and data['is_microbiome_species']:
+            # Extract source transcript from probe_id
+            probe_source = probe_id.split('|')[-1].replace('transcript:', '')
+            
+            # Check if ANY target is different from source
+            is_offtarget = False
+            for target in data['targets']:
+                if probe_source not in target:
+                    is_offtarget = True
+                    break
+            
+            if is_offtarget:
+                # Off-target to microbiome genome
+                if data['min_mm'] <= 1:
+                    status = 'high_risk'
+                else:
+                    status = 'medium_risk'
+            else:
+                # All alignments are self-alignments
+                status = 'safe'
+        
+        # For regular species: safe if aligns to only one gene
         elif unique_gene_count == 1:
-            status = 'safe'
+            probe_source = probe_id.split('|')[-1].replace('transcript:', '')
+            is_self = any(probe_source in target for target in data['targets'])
+            
+            if is_self:
+                status = 'safe'
+            elif data['min_mm'] <= 1:
+                status = 'high_risk'
+            else:
+                status = 'medium_risk'
         # High risk if perfect/near-perfect matches to multiple genes
         elif data['min_mm'] <= 1:
             status = 'high_risk'

@@ -35,11 +35,6 @@
   let safeProbesPage = 1;
   let safeProbesPageSize = 25;
   let safeProbesPageSizeOptions = [10, 25, 50, 100];
-  let microbiomeSelfAligned = [];
-  let showMicrobiomeSelfAligned = false;
-  let loadingMicrobiomeSelfAligned = false;
-  let microbiomeCurrentPage = 1;
-  let microbiomeRowsPerPage = 10;
 
   $: paginatedProbes = filteredSafeProbes.slice(
     (safeProbesPage - 1) * safeProbesPageSize,
@@ -105,61 +100,16 @@
   
   async function fetchAllProbeAlignments(probeId) {
     try {
-      console.log('=== Fetching all alignments for probe:', probeId);
-      
-      const originalProbeId = probeId.trim();
-      const baseProbeId = probeId.split('|')[0].trim();
-      
-      let allMatchingAlignments = [];
-      let currentPage = 1;
-      let totalPages = 1;
-      
-      const BATCH_SIZE = 5;
-      const PAGE_SIZE = 100;
-      
-      while (currentPage <= totalPages) {
-        const batchPromises = [];
-        const batchStart = currentPage;
-        const batchEnd = Math.min(currentPage + BATCH_SIZE - 1, totalPages);
-        
-        for (let batchPage = batchStart; batchPage <= batchEnd; batchPage++) {
-          batchPromises.push(
-            fetch(`/jobs/${jobId}/alignments?page=${batchPage}&page_size=${PAGE_SIZE}`)
-              .then(res => res.ok ? res.json() : null)
-              .then(data => ({ page: batchPage, data }))
-          );
-        }
-        
-        const batchResults = await Promise.all(batchPromises);
-        
-        for (const result of batchResults) {
-          if (!result || !result.data) continue;
-          
-          const { data } = result;
-          const pageAlignments = data.alignments || [];
-          if (totalPages === 1) totalPages = data.total_pages || 1;
-          
-          const matching = pageAlignments.filter(aln => {
-            const alnBase = aln.probe_id.split('|')[0].trim();
-            return aln.probe_id.trim() === originalProbeId || alnBase === baseProbeId;
-          });
-          
-          allMatchingAlignments.push(...matching);
-        }
-        
-        currentPage = batchEnd + 1;
-        
-        loadingProgress = { 
-          current: batchEnd, 
-          total: totalPages, 
-          percent: Math.round((batchEnd / totalPages) * 100)
-        };
+      console.log('Fetching alignments for probe:', probeId);
+      const res = await fetch(`/jobs/${jobId}/alignments?probe_id=${encodeURIComponent(probeId)}`);
+      if (res.ok) {
+        const data = await res.json();
+        console.log('Found', data.alignments?.length || 0, 'alignments');
+        return data.alignments || [];
       }
-      
-      return allMatchingAlignments;
-      
+      return [];
     } catch (e) {
-      console.error('Failed to fetch all probe alignments:', e);
+      console.error('Failed to fetch probe alignments:', e);
       return [];
     }
   }
@@ -203,7 +153,7 @@
                 if (header.trim() === featureData.probe_id || headerBase === baseProbeId) {
                   if (i + 1 < lines.length) {
                     probeSequence = lines[i + 1].trim();
-                    console.log(`✓ Found probe sequence in ${file.filename}:`, probeSequence);
+                    console.log(`Found probe sequence in ${file.filename}:`, probeSequence);
                     break;
                   }
                 }
@@ -242,10 +192,18 @@
             const baseProbeId = featureData.probe_id.split('|')[0].trim();
             
             for (const line of lines) {
-              if (line.includes(baseProbeId)) {
-                const parts = line.trim().split(/\s+/);
+              // Extract probe ID from the line and check for exact match
+              const parts = line.trim().split(/\s+/);
+              if (parts.length >= 11) {
+                const lineProbeId = parts[1]; // probe_id is in column 2
+                const lineProbeBase = lineProbeId.split('|')[0].trim();
                 
-                if (parts.length >= 11) {
+                // Extract probe numbers for exact numeric comparison
+                const baseProbeNum = baseProbeId.match(/probe_(\d+)/)?.[1];
+                const lineProbeNum = lineProbeBase.match(/probe_(\d+)/)?.[1];
+                
+                // Exact match: compare full probe_id OR exact probe number
+                if (lineProbeId === featureData.probe_id || baseProbeNum === lineProbeNum) {
                   const scoringData = {
                     rank: parts[0],
                     probe_id: parts[1],
@@ -423,67 +381,6 @@
       return true;
     });
     safeProbesPage = 1;
-  }
-
-  async function fetchMicrobiomeSelfAligned() {
-    loadingMicrobiomeSelfAligned = true;
-    try {
-      const res = await fetch(`/jobs/${jobId}/download/filtered_probe_alignments_annotated.sam`);
-      if (res.ok) {
-        const text = await res.text();
-        const lines = text.split('\n');
-        
-        const probeMap = new Map();
-        
-        for (const line of lines) {
-          if (line.startsWith('@')) continue;
-          const parts = line.split('\t');
-          if (parts.length < 11) continue;
-          
-          const probeId = parts[0].split('|')[0];
-          const target = parts[2];
-          const position = parseInt(parts[3]);
-          const strand = (parseInt(parts[1]) & 16) ? '-' : '+';
-          const sequence = parts[9];
-          const species = parts.find(p => p.startsWith('SP:Z:'))?.substring(5) || 'Unknown';
-          const nmMatch = line.match(/NM:i:(\d+)/);
-          const mismatches = nmMatch ? parseInt(nmMatch[1]) : 999;
-          
-          const gc = sequence ? ((sequence.match(/[GC]/g) || []).length / sequence.length * 100).toFixed(1) + '%' : '-';
-          
-          if (!probeMap.has(probeId)) {
-            probeMap.set(probeId, { 
-              probe_id: probeId, 
-              target,
-              species, 
-              mismatches, 
-              position,
-              strand,
-              sequence,
-              gc_content: gc,
-              count: 0 
-            });
-          }
-          probeMap.get(probeId).count++;
-        }
-        
-        microbiomeSelfAligned = Array.from(probeMap.values())
-          .filter(p => p.count === 1 && p.mismatches <= 2 && p.species !== 'Unknown')
-          .sort((a, b) => a.probe_id.localeCompare(b.probe_id));
-        
-      }
-    } catch (e) {
-      console.error('Failed to fetch microbiome self-aligned probes:', e);
-    } finally {
-      loadingMicrobiomeSelfAligned = false;
-    }
-  }
-
-  async function toggleMicrobiomeSelfAligned() {
-    showMicrobiomeSelfAligned = !showMicrobiomeSelfAligned;
-    if (showMicrobiomeSelfAligned && microbiomeSelfAligned.length === 0) {
-      await fetchMicrobiomeSelfAligned();
-    }
   }
 
   async function toggleSafeProbes() {
@@ -711,7 +608,7 @@
   
   function getStatusLabel(probe) {
     if (probe.status === 'safe') {
-      return 'Safe (No alignment)';
+      return 'No off-target alignments';
     } else if (probe.status === 'high_risk') {
       return `High Risk (${probe.mismatches} mismatch${probe.mismatches !== 1 ? 'es' : ''})`;
     } else if (probe.status === 'medium_risk') {
@@ -1121,116 +1018,7 @@
       {/if}
     </div>
   {/if}
-  {#if status === 'SUCCESS' && info && (info.species === 'gut-microbe' || info.species === 'human-oral-microbiome' || info.species === 'human-skin-microbiome' || info.species === 'human-vaginal-microbiome' || info.species === 'mouse-gut-microbiome')}
-    <div style="margin-top:1.5rem;">
-      <button on:click={toggleMicrobiomeSelfAligned} class="collapsible-button">
-        <div style="display: flex; align-items: center; gap: 12px;">
-          <div style="text-align: left;">
-            <div style="font-weight: 600; font-size: 15px;">
-              Microbiome Self-Aligned Probes
-            </div>
-            <div style="font-size: 12px; color: #6b7280; font-weight: 400;">
-              Probes with single self-alignment to source genome
-            </div>
-          </div>
-        </div>
-        <span style="transform: rotate({showMicrobiomeSelfAligned ? '180' : '0'}deg); transition: transform 0.3s;">▼</span>
-      </button>
-
-      {#if showMicrobiomeSelfAligned}
-        <div transition:slide={{ duration: 300, easing: quintOut }} style="margin-top:12px; border:1px solid #e5e7eb; border-radius:6px; overflow:hidden;">
-          {#if loadingMicrobiomeSelfAligned}
-            <div style="padding:40px; text-align:center;">
-              <div class="spinner" style="width:32px; height:32px; margin:0 auto 12px;"></div>
-              <p style="color:#6b7280; margin:0;">Loading microbiome self-alignments...</p>
-            </div>
-          {:else if microbiomeSelfAligned.length > 0}
-            <div style="padding:16px; background:#f9fafb; border-bottom:1px solid #e5e7eb;">
-              <div style="font-size:13px; color:#6b7280;">
-                Showing {microbiomeSelfAligned.length} probe{microbiomeSelfAligned.length !== 1 ? 's' : ''} with safe self-alignment
-              </div>
-            </div>
-            <div style="overflow-x:auto;">
-              <table style="width:100%; border-collapse:collapse; font-size:12px;">
-                <thead>
-                  <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
-                    <th style="padding:10px; text-align:left;">#</th>
-                    <th style="padding:10px; text-align:left;">Probe ID</th>
-                    <th style="padding:10px; text-align:left;">Target</th>
-                    <th style="padding:10px; text-align:left;">Species</th>
-                    <th style="padding:10px; text-align:center;">Mismatches</th>
-                    <th style="padding:10px; text-align:center;">Position</th>
-                    <th style="padding:10px; text-align:center;">Strand</th>
-                    <th style="padding:10px; text-align:center;">GC%</th>
-                    <th style="padding:10px; text-align:left;">Sequence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each microbiomeSelfAligned.slice((microbiomeCurrentPage - 1) * microbiomeRowsPerPage, microbiomeCurrentPage * microbiomeRowsPerPage) as probe, idx}
-                    <tr style="border-bottom:1px solid #e5e7eb;">
-                      <td style="padding:10px; color:#6b7280;">{(microbiomeCurrentPage - 1) * microbiomeRowsPerPage + idx + 1}</td>
-                      <td style="padding:10px; font-family:monospace; color:#1f2937;">{probe.probe_id}</td>
-                      <td style="padding:10px; font-family:monospace; color:#374151; font-size:11px;">{probe.target || '-'}</td>
-                      <td style="padding:10px; color:#374151; font-size:11px;">{probe.species}</td>
-                      <td style="padding:10px; text-align:center;">
-                        <span style="padding:3px 8px; border-radius:3px; font-weight:600; background:#d1fae5; color:#065f46;">
-                          {probe.mismatches}
-                        </span>
-                      </td>
-                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.position?.toLocaleString() || '-'}</td>
-                      <td style="padding:10px; text-align:center;">
-                        <span style="padding:3px 8px; background:#e5e7eb; border-radius:3px; font-family:monospace;">
-                          {probe.strand || '+'}
-                        </span>
-                      </td>
-                      <td style="padding:10px; text-align:center; font-family:monospace;">{probe.gc_content || '-'}</td>
-                      <td style="padding:10px;">
-                        {#if probe.sequence}
-                          <div style="font-family:monospace; font-size:10px; line-height:1.5; word-break:break-all;">
-                            {probe.sequence}
-                          </div>
-                        {:else}
-                          <span style="color:#9ca3af;">N/A</span>
-                        {/if}
-                      </td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-            
-            {#if microbiomeSelfAligned.length > microbiomeRowsPerPage}
-              <div style="padding:12px 16px; background:#f9fafb; border-top:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
-                <div style="font-size:12px; color:#6b7280;">
-                  Page {microbiomeCurrentPage} of {Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage)}
-                </div>
-                <div style="display:flex; gap:8px;">
-                  <button 
-                    on:click={() => microbiomeCurrentPage = Math.max(1, microbiomeCurrentPage - 1)}
-                    disabled={microbiomeCurrentPage === 1}
-                    style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:white; cursor:pointer; font-size:12px; {microbiomeCurrentPage === 1 ? 'opacity:0.5; cursor:not-allowed;' : ''}"
-                  >
-                    Previous
-                  </button>
-                  <button 
-                    on:click={() => microbiomeCurrentPage = Math.min(Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage), microbiomeCurrentPage + 1)}
-                    disabled={microbiomeCurrentPage >= Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage)}
-                    style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:white; cursor:pointer; font-size:12px; {microbiomeCurrentPage >= Math.ceil(microbiomeSelfAligned.length / microbiomeRowsPerPage) ? 'opacity:0.5; cursor:not-allowed;' : ''}"
-                  >
-                    Next
-                  </button>
-                </div>
-              </div>
-            {/if}
-          {:else}
-            <div style="padding:40px; text-align:center; color:#6b7280;">
-              No self-aligned probes found
-            </div>
-          {/if}
-        </div>
-      {/if}
-    </div>
-  {/if}
+  
   {#if status === 'SUCCESS' && sequenceLength > 0 && inputType === 'gene_sequence'}
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
@@ -1356,21 +1144,18 @@
                 </table>
                 
                 <div style="margin-top:16px; padding:12px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
-                  <div style="font-size:20px; margin-bottom:6px;">✓</div>
                   <p style="margin:0; font-weight:600;">Safe Probe - No off-target alignments</p>
                 </div>
               </div>
             {:else}
               
               <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
-                <div style="font-size:28px; margin-bottom:8px;">✓</div>
                 <p style="margin:0; font-weight:600;">No off-target alignments</p>
               </div>
             {/if}
             
           {:else if expandedProbeAlignments.length === 0}
             <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
-              <div style="font-size:28px; margin-bottom:8px;">✓</div>
               <p style="margin:0; font-weight:600;">No off-target alignments</p>
             </div>
             
@@ -1383,12 +1168,8 @@
                 <thead>
                   <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
                     <th style="padding:8px; text-align:left;">#</th>
-                    <th style="padding:8px; text-align:left;">Target</th>
-                    {#if info?.species === 'human' || info?.species === 'mouse'}
-                      <th style="padding:8px; text-align:left;">Gene ID</th>
-                    {:else}
-                      <th style="padding:8px; text-align:left;">Species</th>
-                    {/if}
+                    <th style="padding:8px; text-align:left;">Off-Target</th>
+                    <th style="padding:8px; text-align:left;">Annotation</th>
                     <th style="padding:8px; text-align:center;">Mismatches</th>
                     <th style="padding:8px; text-align:center;">Position</th>
                     <th style="padding:8px; text-align:center;">Strand</th>

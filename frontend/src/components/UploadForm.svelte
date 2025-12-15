@@ -50,11 +50,40 @@ GCCGCCTTCTTCGGCATATC`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   let species = 'human';
+  let alignMicrobiome = true;
+  let alignHost = true;  
   let probe_length = 30;
   let max_mismatches = 2;
   let uploading = false;
   let error = '';
+  $: microbiomeLabel = {
+    'gut-microbe': 'Human Gut Microbiome',
+    'human-oral-microbiome': 'Human Oral Microbiome',
+    'human-skin-microbiome': 'Human Skin Microbiome',
+    'human-vaginal-microbiome': 'Human Vaginal Microbiome',
+    'mouse-gut-microbiome': 'Mouse Gut Microbiome'
+  }[species] || 'Microbiome';
 
+  $: hostLabel = species === 'mouse-gut-microbiome' ? 'Mouse Transcriptome' : 'Human Transcriptome';
+
+  let effectiveSpecies;
+  $: {
+    const microbiomeSpecies = ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome', 'mouse-gut-microbiome'];
+    
+    if (microbiomeSpecies.includes(species)) {
+      if (!alignMicrobiome && alignHost) {
+            if (species === 'mouse-gut-microbiome') {
+                effectiveSpecies = 'mouse';
+            } else {
+                effectiveSpecies = 'human';
+            }
+        } else {
+            effectiveSpecies = species;
+        }
+    } else {
+        effectiveSpecies = species;
+    }
+  }
   async function submit(e) {
     e.preventDefault();
     error = '';
@@ -85,8 +114,13 @@ GCCGCCTTCTTCGGCATATC`;
       form.append('probe_sequence', sequenceToSubmit);
       console.log('Appending probe_sequence');
     }
-
-    form.append('species', species);
+    form.append('species', effectiveSpecies);
+    if (effectiveSpecies !== species) {
+      console.log('Species overridden to:', effectiveSpecies);
+    } else {
+      form.append('align_microbiome', alignMicrobiome ? 'true' : 'false');
+      form.append('align_host', alignHost ? 'true' : 'false');
+    } 
     if (inputType === 'gene') {
       form.append('probe_length', String(probe_length));
     }
@@ -170,6 +204,19 @@ GCCGCCTTCTTCGGCATATC`;
 
         </select>
       </div>
+      {#if ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome', 'mouse-gut-microbiome'].includes(species)}
+      <div>
+        <div class="label-text" style="margin-bottom: 8px;">Select Target (You can select one or both)</div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <label class="radio-label">
+            <input type="checkbox" bind:checked={alignMicrobiome}> {microbiomeLabel}
+          </label>
+          <label class="radio-label">
+            <input type="checkbox" bind:checked={alignHost}> {hostLabel}
+          </label>
+        </div>
+      </div>
+    {/if}
      {#if inputType === 'gene'}
         <div>
           <label for="probe_length" class="label-text">Probe Length (bp)</label>
