@@ -50,10 +50,11 @@ GCCGCCTTCTTCGGCATATC`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   let species = 'human';
-  let alignMicrobiome = true;
+  let kmerLength = '';
+  let alignMicrobiome = false;
   let alignHost = true;  
-  let probe_length = 30;
-  let max_mismatches = 2;
+  let probe_length = '';
+  let max_mismatches = '';
   let uploading = false;
   let error = '';
   $: microbiomeLabel = {
@@ -100,9 +101,17 @@ GCCGCCTTCTTCGGCATATC`;
 
     console.log('Sequence to submit (first 100 chars):', sequenceToSubmit.substring(0, 100));
 
-    if (probe_length <= 0) {
+    if (probe_length !== '' && probe_length <= 0) {
       error = 'Probe length must be a positive number';
       return;
+    }
+    const microbiomeSpecies = ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 
+                               'human-vaginal-microbiome', 'mouse-gut-microbiome'];
+    if (microbiomeSpecies.includes(species)) {
+      if (!alignMicrobiome && !alignHost) {
+        error = 'Please select at least one target (Microbiome or Host)';
+        return;
+      }
     }
 
     const form = new FormData();
@@ -122,10 +131,10 @@ GCCGCCTTCTTCGGCATATC`;
       form.append('align_host', alignHost ? 'true' : 'false');
     } 
     if (inputType === 'gene') {
-      form.append('probe_length', String(probe_length));
+      form.append('probe_length', String(probe_length || 30));
     }
-
-    form.append('max_mismatches', String(max_mismatches));
+    form.append('kmer_length', String(kmerLength || 14));
+    form.append('max_mismatches', String(max_mismatches || 2));
 
     console.log('Form data being sent:');
     for (let [key, value] of form.entries()) {
@@ -220,12 +229,15 @@ GCCGCCTTCTTCGGCATATC`;
      {#if inputType === 'gene'}
         <div>
           <label for="probe_length" class="label-text">Probe Length (bp)</label>
-          <input id="probe_length" type="number" bind:value={probe_length} class="number-input" />
-        </div>
+          <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 30)" class="number-input" />        </div>
       {/if}
       <div>
+        <label for="kmer_length" class="label-text">K-mer Length (bp)</label>
+        <input id="kmer_length" type="number" min="14" bind:value={kmerLength} placeholder="Min: 14 bp (default: 14)" class="number-input" />      
+      </div>
+      <div>
         <label for="max_mismatches" class="label-text">Max Mismatches</label>
-        <input id="max_mismatches" type="number" min="0" bind:value={max_mismatches} class="number-input" />
+        <input id="max_mismatches" type="number" min="0" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />      
       </div>
     </div>
   </div>

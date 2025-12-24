@@ -727,8 +727,9 @@
       <thead>
         <tr style="background:#f3f4f6;">
           <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Candidate Probes (40–80% GC content)</th>
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Safe Probes Identified</th>
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">K-mer Safety Analysis Result (&gt;=14 consecutive matches)</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Potential On-target Probes</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Safe Probes </th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">K-mer Safety Analysis Result</th>
         </tr>
       </thead>
 
@@ -740,29 +741,52 @@
           <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
             <div>{formatNumber(info.stats.non_aligned_probes)}</div>
             {#if info.stats.non_aligned_probes > 0}
+              {#each files as f}
+                {#if f.filename.toLowerCase() === 'non_aligned_probes.fa'}
+                  <a
+                    href={`/jobs/${jobId}/download/${f.filename}`}
+                    class="download-link"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                    </svg>
+                    <span>Download Potential On-target Probes</span>
+                  </a>
+                {/if}
+              {/each}
+            {/if}
+          </td>
+          <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
+            <div>{formatNumber(info.stats.safe_probes || 0)}</div>
+            {#if info.stats.non_aligned_probes > 0}
             {#each files as f}
               {#if f.filename.toLowerCase() === 'safe_probes_scores.txt'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
                   class="download-link"
                 >
-                  <span>Download Probes</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                </svg>
+                <span>Download Safe Probes</span>
                 </a>
               {/if}
             {/each}
             {/if}
           </td>
 
-          
           <td style="padding:12px; border:1px solid #e5e7eb; text-align:center; line-height:1.6;">
             
             {#each files as f}
-              {#if f.filename.toLowerCase() === '14mer_matches_report.txt'}
+              {#if f.filename.toLowerCase() === 'kmer_matches_report.txt'}
                 <a
                   href={`/jobs/${jobId}/download/${f.filename}`}
                   class="download-link"
                 >
-                  Download Report
+                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                </svg>
+                <span>Download K-mer Analysis Report</span>
                 </a>
               {/if}
             {/each}
@@ -772,7 +796,31 @@
     </table>
   </div>
 {/if}
+  
   {#if info && info.stats && info.stats.non_aligned_probes > 0}
+    <div style="
+      margin-top:1.5rem;
+      padding:12px 16px;
+      background:#fef3c7;
+      border:1px solid #fbbf24;
+      border-left:4px solid #f59e0b;
+      border-radius:6px;
+    ">
+      <div style="display:flex; align-items:start; gap:12px;">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0; margin-top:2px;">
+          <path d="M10 0C4.48 0 0 4.48 0 10s4.48 10 10 10 10-4.48 10-10S15.52 0 10 0zm1 15H9v-2h2v2zm0-4H9V5h2v6z" fill="#f59e0b"/>
+        </svg>
+        <div style="font-size:13px; line-height:1.6; color:#92400e;">
+          <strong style="display:block; margin-bottom:4px;">Note:</strong>
+          K-mer safety analysis is performed on probes that do not have any alignments 
+          within the provided mismatch threshold for the selected target. This analysis identifies probes with 
+          k-mer matches that could cause off-target binding. Probes are flagged as unsafe 
+          if k-mers have matches in coding sequences (CDS) of other genes. Only probes without 
+          CDS matches or with matches limited to non-coding regions are classified as safe. 
+          For human/mouse, any k-mer match to the transcriptome is considered unsafe.
+        </div>
+      </div>
+    </div>
     <div style="margin-top:1.5rem;">
       <button
         on:click={toggleSafeProbes}
@@ -781,7 +829,7 @@
         <div style="display: flex; align-items: center; gap: 12px;">
           <div style="text-align: left;">
             <div style="font-weight: 600; font-size: 15px; font-family: inherit;">
-              Safe Probe Scoring Details ({formatNumber(info.stats.non_aligned_probes)} probes)
+              Safe Probe Scoring Details ({formatNumber(info.stats.safe_probes)} probes)
             </div>
             <div style="font-size: 12px; color: #6b7280; font-weight: 400;">
               Click to view quality metrics and rankings
@@ -1404,42 +1452,43 @@
   .download-link {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    color: #1d4ed8;
+    gap: 6px;
+    color: white;
     font-size: 13px;
+    font-weight: 600;
     text-decoration: none;
-    font-style: italic;
-    margin-top: 3px;
-    padding: 3px 8px;
-    border-radius: 3px;
-    background: #dbeafe;
-    border: 1px solid #bfdbfe;
-    transition: background 0.15s ease;
+    margin-top: 8px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    border: none;
+    transition: all 0.2s ease;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
   }
-  
   .download-link:hover,
   .download-link:focus {
-    background: #bfdbfe;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
   }
   .collapsible-button {
-  width: 100%;
-  padding: 12px 16px;
-  background: #d1fae5;  
-  border: 1px solid #10b981;  
-  border-radius: 6px;
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-weight: 600;
-  font-size: 15px;
-  color: #065f46; 
-  transition: background 0.2s;
-}
+    width: 100%;
+    padding: 12px 16px;
+    background: #d1fae5;  
+    border: 1px solid #10b981;  
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+    font-size: 15px;
+    color: #065f46; 
+    transition: background 0.2s;
+  }
 
-.collapsible-button:hover {
-  background: #a7f3d0;  
-}
+  .collapsible-button:hover {
+    background: #a7f3d0;  
+  }
 
   
 </style>

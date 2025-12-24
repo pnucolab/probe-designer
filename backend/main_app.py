@@ -262,6 +262,7 @@ async def create_job(
     species: str = Form("human"),
     probe_length: int = Form(30),
     max_mismatches: int = Form(2),
+    kmer_length: int = Form(14),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
     align_microbiome: str = Form("false"),
@@ -345,6 +346,7 @@ async def create_job(
         'species': species,
         'probe_length': probe_length,
         'max_mismatches': max_mismatches,
+        'kmer_length': kmer_length,
         'job_id': job_id,
         'input_type': input_type,
         'input_file': dest_name,
@@ -470,6 +472,7 @@ def parse_pipeline_stats(log_path):
         "candidate_probes": None,
         "total_alignments": None,
         "non_aligned_probes": None,
+        "safe_probes": None,
         "filtered_alignments": None
     }
     
@@ -488,6 +491,10 @@ def parse_pipeline_stats(log_path):
         match = re.search(r'Non-aligned probes:\s*([\d,]+)', content)
         if match:
             stats["non_aligned_probes"] = int(match.group(1).replace(',', ''))
+        
+        match = re.search(r'Final safe probes:\s*([\d,]+)', content)
+        if match:
+            stats["safe_probes"] = int(match.group(1).replace(',', ''))
         
         match = re.search(r'Kept in filtered \(NM<=\d+\):\s*([\d,]+)', content)
         print(f"DEBUG: Filtered alignments match: {match}")  
@@ -664,7 +671,7 @@ def download_job_file(job_id: str, filename: str):
         "reference.fasta",
         "reference.fasta.fai",
         "probes.gff3",
-        "14mer_matches_report.txt"
+        "kmer_matches_report.txt"
     ]
     allowed_normalized = {f.lower().strip() for f in allowed_files}
     if filename.lower() not in allowed_normalized:
