@@ -12,7 +12,7 @@ import logging
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'core'))
-from probe_classifier import classify_probes_from_sam
+from probe_classifier import classify_probes_from_sam, infer_source_transcripts
 
 
 logger = logging.getLogger(__name__)
@@ -127,13 +127,33 @@ class JBrowseFileGenerator:
                         is_microbiome = True
                         break
         
-        # Get probe classifications from SAM file
+        # Infer source transcripts and classify probes
         probe_classifications = {}
         if aligned_sam_file.exists():
+            source_info = infer_source_transcripts(str(aligned_sam_file))
             probe_classifications = classify_probes_from_sam(
-                str(aligned_sam_file), 
-                is_microbiome=is_microbiome
+                str(aligned_sam_file),
+                is_microbiome=is_microbiome,
+                source_transcripts=source_info['source_transcripts'],
+                source_gene=source_info['source_gene']
             )
+        
+        # Load safe probes from safe_probes_scores.txt if it exists
+        safe_probe_ids = set()
+        safe_probes_file = self.output_dir / "safe_probes_scores.txt"
+        if safe_probes_file.exists():
+            with open(safe_probes_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith('#') or line.startswith('=') or line.startswith('-') or line.startswith('Probe'):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 1:
+                        # Extract probe_id (e.g., "probe_5")
+                        probe_id = parts[0]
+                        probe_id_match = re.search(r'probe_\d+', probe_id)
+                        if probe_id_match:
+                            safe_probe_ids.add(probe_id_match.group(0))
         
         # Parse probe regions from FASTA
         probe_regions = []
@@ -151,21 +171,31 @@ class JBrowseFileGenerator:
                         full_probe_id = header  
                         start = int(start_match.group(1))
                         end = int(end_match.group(1))
+                        
                         if full_probe_id in probe_classifications:
                             classification = probe_classifications[full_probe_id]
                             status = classification['status']
                             mismatches = classification['min_mismatches']
+                            # Self-aligned safe probes must also pass k-mer check
+                            if status == 'safe' and probe_id_display not in safe_probe_ids:
+                                status = 'medium_risk'
+                                mismatches = None
                         else:
-                            status = 'safe'
+                            # No alignments - check if in safe probes (passed k-mer analysis)
+                            if probe_id_display in safe_probe_ids:
+                                status = 'safe'
+                            else:
+                                # Not in safe probes = failed k-mer analysis = medium_risk
+                                status = 'medium_risk'
                             mismatches = None
                         
                         probe_regions.append({
-                            "probe_id": probe_id_display,  # Use short ID for display
-                        "start": start,
-                        "end": end,
-                        "status": status,
-                        "mismatches": mismatches
-                    })
+                            "probe_id": probe_id_display,
+                            "start": start,
+                            "end": end,
+                            "status": status,
+                            "mismatches": mismatches
+                        })
         return probe_regions
 
     def generate_probes_gff3(
@@ -188,7 +218,7 @@ class JBrowseFileGenerator:
                 seqid = reference_id
                 source = "probe_design"
                 feature_type = "probe"
-                start = probe['start']  
+                start = probe['start'] + 1
                 end = probe['end']
                 score = "."
                 strand = "+"
@@ -209,7 +239,7 @@ class JBrowseFileGenerator:
                     attributes.append(f"color={color_map[probe['status']]}")
                 desc_map = {
                     'high_risk': f"High risk: {probe['mismatches']} mismatch(es)" if probe['mismatches'] is not None else "High risk: Off-target alignment",
-                    'medium_risk': f"Medium risk: {probe['mismatches']} mismatches",
+                    'medium_risk': f"Medium risk: {probe['mismatches']} mismatches" if probe['mismatches'] is not None else "Medium risk: Failed k-mer safety analysis",
                     'safe': "Safe: No off-target alignments"
                 }
                 if probe['status'] in desc_map:

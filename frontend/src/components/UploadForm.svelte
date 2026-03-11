@@ -50,39 +50,21 @@ GCCGCCTTCTTCGGCATATC`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   let species = 'human';
+  let selectedMicrobiome = '';
   let kmerLength = '';
   let alignMicrobiome = false;
   let alignHost = true;  
   let probe_length = '';
   let max_mismatches = '';
   let uploading = false;
-  let error = '';
-  $: microbiomeLabel = {
-    'gut-microbe': 'Human Gut Microbiome',
-    'human-oral-microbiome': 'Human Oral Microbiome',
-    'human-skin-microbiome': 'Human Skin Microbiome',
-    'human-vaginal-microbiome': 'Human Vaginal Microbiome',
-    'mouse-gut-microbiome': 'Mouse Gut Microbiome'
-  }[species] || 'Microbiome';
-
-  $: hostLabel = species === 'mouse-gut-microbiome' ? 'Mouse Transcriptome' : 'Human Transcriptome';
-
+  let error = ''; 
+  $: hostLabel = species === 'mouse' ? 'Mouse Transcriptome' : 'Human Transcriptome';
   let effectiveSpecies;
   $: {
-    const microbiomeSpecies = ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome', 'mouse-gut-microbiome'];
-    
-    if (microbiomeSpecies.includes(species)) {
-      if (!alignMicrobiome && alignHost) {
-            if (species === 'mouse-gut-microbiome') {
-                effectiveSpecies = 'mouse';
-            } else {
-                effectiveSpecies = 'human';
-            }
-        } else {
-            effectiveSpecies = species;
-        }
+    if (selectedMicrobiome && alignMicrobiome) {
+      effectiveSpecies = selectedMicrobiome;
     } else {
-        effectiveSpecies = species;
+      effectiveSpecies = species;
     }
   }
   async function submit(e) {
@@ -105,11 +87,52 @@ GCCGCCTTCTTCGGCATATC`;
       error = 'Probe length must be a positive number';
       return;
     }
-    const microbiomeSpecies = ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 
-                               'human-vaginal-microbiome', 'mouse-gut-microbiome'];
-    if (microbiomeSpecies.includes(species)) {
-      if (!alignMicrobiome && !alignHost) {
-        error = 'Please select at least one target (Microbiome or Host)';
+    if (!alignMicrobiome && !alignHost) {
+      error = 'Please select at least one target (Host Transcriptome or Additional Microbiome)';
+      return;
+    }
+    if (alignMicrobiome && !selectedMicrobiome) {
+      if (alignHost) {
+        error = 'Please select a microbiome type or uncheck Additional Microbiome';
+      } else {
+        error = 'Please select a microbiome type, or uncheck Additional Microbiome and select a host transcriptome';
+      }
+      return;
+    }
+
+    if (inputType === 'gene') {
+      const effectiveProbeLength = probe_length || 30;
+      const lines = sequenceToSubmit.split('\n');
+      let currentHeader = '';
+      let currentSeq = '';
+      const shortSequences = [];
+      let headerCount = 0;
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith('>')) {
+          headerCount++;
+          if (currentHeader && currentSeq.length > 0 && currentSeq.length < effectiveProbeLength) {
+            shortSequences.push({ header: currentHeader, length: currentSeq.length });
+          }
+          currentHeader = trimmed.substring(1).split(/\s/)[0] || 'unnamed';
+          currentSeq = '';
+        } else {
+          currentSeq += trimmed.replace(/\s/g, '');
+        }
+      }
+      if (currentHeader && currentSeq.length > 0 && currentSeq.length < effectiveProbeLength) {
+        shortSequences.push({ header: currentHeader, length: currentSeq.length });
+      }
+
+      if (headerCount > 1) {
+        error = `Only a single FASTA sequence is allowed per job. Found ${headerCount} sequences. Please submit one sequence at a time.`;
+        return;
+      }
+
+      if (shortSequences.length > 0) {
+        const details = shortSequences.map(s => `"${s.header}" (${s.length} bp)`).join(', ');
+        error = `${shortSequences.length === 1 ? 'Sequence' : 'Sequences'} shorter than probe length (${effectiveProbeLength} bp): ${details}. Please remove short sequences or reduce the probe length.`;
         return;
       }
     }
@@ -124,16 +147,12 @@ GCCGCCTTCTTCGGCATATC`;
       console.log('Appending probe_sequence');
     }
     form.append('species', effectiveSpecies);
-    if (effectiveSpecies !== species) {
-      console.log('Species overridden to:', effectiveSpecies);
-    } else {
-      form.append('align_microbiome', alignMicrobiome ? 'true' : 'false');
-      form.append('align_host', alignHost ? 'true' : 'false');
-    } 
+    form.append('align_microbiome', alignMicrobiome ? 'true' : 'false');
+    form.append('align_host', alignHost ? 'true' : 'false'); 
     if (inputType === 'gene') {
       form.append('probe_length', String(probe_length || 30));
     }
-    form.append('kmer_length', String(kmerLength || 14));
+    form.append('kmer_length', String(kmerLength || 18));
     form.append('max_mismatches', String(max_mismatches || 2));
 
     console.log('Form data being sent:');
@@ -184,63 +203,106 @@ GCCGCCTTCTTCGGCATATC`;
     <div class="label-text">Input Type</div>
     <div class="radio-group">
       <label class="radio-label">
-        <input type="radio" bind:group={inputType} value="gene"> Gene Sequence
+        <input type="radio" bind:group={inputType} value="gene"> Transcript FASTA
       </label>
       <label class="radio-label">
-        <input type="radio" bind:group={inputType} value="probe"> Probe Sequence
+        <input type="radio" bind:group={inputType} value="probe"> Probe FASTA
       </label>
     </div>
   </div>
+  {#if inputType === 'gene'}
+    <div class="info-notice">
+      <div style="margin-bottom:6px;">
+        <strong>⚠ Only DNA-form sequences accepted (A, T, C, G, N).</strong> RNA sequences containing U must be converted to T before submission.
+      </div>
+      <ul style="margin:0; padding-left:18px; list-style:disc;">
+        <li>For host probe design, paste a <strong>transcript</strong> FASTA sequence.</li>
+        <li>For microbe probe design, paste the <strong>microbe gene</strong> FASTA sequence.</li>
+        <li>The input should be a <strong>single</strong> FASTA sequence.</li>
+      </ul>
+    </div>
+  {/if}
   <textarea
     bind:value={pastedText}
     placeholder={placeholderText}
     class="textarea-input"
   ></textarea>
-  <div class="config-box">
-    <h3 class="heading-3" style="margin-bottom: 16px;">Configuration</h3>
+    <div class="config-box">
+      <h3 class="heading-3" style="margin-bottom: 16px;">Configuration</h3>
+  
+      <div class="form-grid">
+        <div>
+          <label for="species" class="label-text">Host Organism</label>
+          <select id="species" bind:value={species} on:change={() => { selectedMicrobiome = ''; alignMicrobiome = false; }} class="select-input">
+            <option value="human">Human</option>
+            <option value="mouse">Mouse</option>
+          </select>
+          
+          <div style="margin-top: 12px;">
+            <div class="label-text">Select Target Transcriptome</div>
+            <div style="border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; margin-top: 4px; display: flex; flex-direction: column; gap: 6px;">
+              
+              <label class="radio-label">
+                <input type="checkbox" bind:checked={alignHost}> {hostLabel}
+                {#if species === 'human'}
+                  <a href="https://www.gencodegenes.org/human/" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                {:else}
+                  <a href="https://www.gencodegenes.org/mouse/" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                {/if}
+              </label>
 
-    <div class="form-grid">
-      <div>
-        <label for="species" class="label-text">Host Organism / Target Microbiome</label>
-        <select id="species" bind:value={species} class="select-input">
-          <option value="human">Human Transcriptome</option>
-          <option value="gut-microbe">Human Gut Microbiome</option>
-          <option value="human-oral-microbiome">Human Oral Microbiome</option>
-          <option value="human-skin-microbiome">Human Skin Microbiome</option>
-          <option value="human-vaginal-microbiome">Human Vaginal Microbiome</option>
-          <option value="mouse-gut-microbiome">Mouse Gut Microbiome</option>
-          <option value="mouse">Mouse Transcriptome</option>
-
-        </select>
-      </div>
-      {#if ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome', 'mouse-gut-microbiome'].includes(species)}
-      <div>
-        <div class="label-text" style="margin-bottom: 8px;">Select Target (You can select one or both)</div>
-        <div style="display: flex; flex-direction: column; gap: 8px;">
-          <label class="radio-label">
-            <input type="checkbox" bind:checked={alignMicrobiome}> {microbiomeLabel}
-          </label>
-          <label class="radio-label">
-            <input type="checkbox" bind:checked={alignHost}> {hostLabel}
-          </label>
+              <label class="radio-label">
+                <input type="checkbox" bind:checked={alignMicrobiome} on:change={(e) => { if (!e.target.checked) selectedMicrobiome = ''; }}> Additional Microbiome
+              </label>
+              <div style="margin-left: 24px; display: flex; flex-direction: column; gap: 4px; opacity: {alignMicrobiome ? 1 : 0.5};">
+                {#if species === 'human'}
+                  <label class="radio-label">
+                    <input type="radio" bind:group={selectedMicrobiome} value="gut-microbe" disabled={!alignMicrobiome}> Human Gut Microbiome
+                    <a href="https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-gut-v2-0-2" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" bind:group={selectedMicrobiome} value="human-oral-microbiome" disabled={!alignMicrobiome}> Human Oral Microbiome
+                    <a href="https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-oral-v1-0-1" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" bind:group={selectedMicrobiome} value="human-skin-microbiome" disabled={!alignMicrobiome}> Human Skin Microbiome
+                    <a href="https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-skin-v1-0" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                  </label>
+                  <label class="radio-label">
+                    <input type="radio" bind:group={selectedMicrobiome} value="human-vaginal-microbiome" disabled={!alignMicrobiome}> Human Vaginal Microbiome
+                    <a href="https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-vaginal-v1-0" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                  </label>
+                {:else}
+                  <label class="radio-label">
+                    <input type="radio" bind:group={selectedMicrobiome} value="mouse-gut-microbiome" disabled={!alignMicrobiome}> Mouse Gut Microbiome
+                    <a href="https://www.ebi.ac.uk/metagenomics/genome-catalogues/mouse-gut-v1-0" target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
+                  </label>
+                {/if}
+              </div>
+              {#if !alignHost && !alignMicrobiome}
+                <div style="color: #dc2626; font-size: 13px; margin-top: 8px;">
+                  ⚠️ Warning: At least one category must be selected.
+                </div>
+              {/if}
+            </div>
+          </div>
+        </div>
+        
+       {#if inputType === 'gene'}
+          <div>
+            <label for="probe_length" class="label-text">Probe Length (bp)</label>
+            <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 30)" class="number-input" />        </div>
+        {/if}
+        <div>
+          <label for="kmer_length" class="label-text">K-mer Length (bp)</label>
+          <input id="kmer_length" type="text" bind:value={kmerLength} placeholder="Default: 18" class="number-input" />      
+        </div>
+        <div>
+          <label for="max_mismatches" class="label-text">Max Mismatches</label>
+          <input id="max_mismatches" type="number" min="0" max="2" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />      
         </div>
       </div>
-    {/if}
-     {#if inputType === 'gene'}
-        <div>
-          <label for="probe_length" class="label-text">Probe Length (bp)</label>
-          <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 30)" class="number-input" />        </div>
-      {/if}
-      <div>
-        <label for="kmer_length" class="label-text">K-mer Length (bp)</label>
-        <input id="kmer_length" type="number" min="14" bind:value={kmerLength} placeholder="Min: 14 bp (default: 14)" class="number-input" />      
-      </div>
-      <div>
-        <label for="max_mismatches" class="label-text">Max Mismatches</label>
-        <input id="max_mismatches" type="number" min="0" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />      
-      </div>
     </div>
-  </div>
 
   <div class="form-actions">
     <Button 
@@ -268,6 +330,18 @@ GCCGCCTTCTTCGGCATATC`;
 </form>
 
 <style>
+  .info-notice {
+    width: calc(100% - 20px);
+    background: #f0f7ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-size: 13px;
+    color: #1e3a5f;
+    line-height: 1.6;
+    box-sizing: border-box;
+  }
+
   input[type="number"] {
     appearance: textfield;
   }

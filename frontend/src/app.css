@@ -1,6 +1,5 @@
-/* Minimal CSS (Tailwind removed) */
 html, body, #app { height: 100%; margin:0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
-#app { display:flex; align-items:center; justify-content:center; padding:2rem; }
+#app { display:flex; flex-direction:column; align-items:stretch; }
 .btn { background:#0ea5e9; color:white; padding:0.5rem 1rem; border-radius:6px; }
 .btn:disabled { opacity:0.6 }
 .text-red-600 { color:#dc2626 }
@@ -20,3 +19,4 @@ html, body, #app { height: 100%; margin:0; font-family: system-ui, -apple-system
 .grid { display:grid }
 .grid-cols-3 { grid-template-columns: repeat(3, 1fr) }
 .gap-2 { gap:0.5rem }
+

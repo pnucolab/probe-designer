@@ -103,52 +103,65 @@
           <ol class="ordered-list">
             <li><strong>Sequence Input:</strong> Users paste either microbial gene sequences (for probe generation) or probe sequences (for direct alignment analysis) in FASTA format directly into the web interface</li>
             <li><strong>Probe Generation:</strong> The pipeline generates short oligonucleotide probes of specified length from the input genome</li>
-            <li><strong>Host Genome Alignment:</strong> Each probe is aligned against the selected host genome (e.g. human) using high-performance alignment algorithms</li>
-            <li><strong>Specificity Filtering:</strong> Probes that match the host genome within the specified mismatch tolerance have a potential to hybridize with host genomes.</li>
-            <li><strong>Results & Visualization:</strong> For gene sequence input, results are displayed in an interactive genome browser showing probe positions and alignment details. 
-              For probe sequence input, a detailed alignment table shows all matches against the host genome with 
+            <li><strong>Alignment:</strong> Each probe is aligned against the selected host transcriptome and/or co-residing microbiome communities (e.g. gut, oral, skin, vaginal) using high-performance alignment algorithms</li>
+            <li><strong>Specificity Filtering:</strong> Probes that match the host or microbiome transcriptomes within the specified mismatch tolerance are flagged as potential cross-hybridizers and filtered out</li>
+            <li><strong>Results & Visualization:</strong> For gene sequence input, results are displayed in an interactive genome browser showing probe positions and alignment details.
+              For probe sequence input, a detailed alignment table shows all matches with
               mismatch counts and filtering options</li>
           </ol>
         </div>
       </section>
 
       <section>
-        <h2 class="heading-2">Key Features</h2>
+        <h2 class="heading-2">How to Use</h2>
         <div class="grid-auto">
-          <div class="card">
-            <h3 class="heading-3">Customizable Parameters</h3>
-            <p class="text-small">Adjust probe length and mismatch tolerance to balance specificity and sensitivity</p>
-          </div>
-          <div class="card">
-            <h3 class="heading-3">High Performance</h3>
-            <p class="text-small">Optimized algorithms handle large genomes efficiently with parallel processing</p>
-          </div>
-          <div class="card">
-            <h3 class="heading-3">Real-time Monitoring</h3>
-            <p class="text-small">Track job progress in real-time with detailed status updates and estimated completion times</p>
-          </div>
+          <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/index.html" target="_blank" rel="noopener" class="doc-link-card">
+            <div class="doc-link-row">
+              <div class="doc-link-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+                  <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="doc-link-title">Documentation</h3>
+                <p class="doc-link-desc">Usage guides, setup instructions, and best practices</p>
+              </div>
+            </div>
+          </a>
+          <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/userguide/07-output-interpretation.html" target="_blank" rel="noopener" class="doc-link-card">
+            <div class="doc-link-row">
+              <div class="doc-link-icon">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M4 4h16v16H4z"/>
+                  <line x1="8" y1="8" x2="16" y2="8"/>
+                  <line x1="8" y1="12" x2="16" y2="12"/>
+                  <line x1="8" y1="16" x2="12" y2="16"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="doc-link-title">Input & Output Interpretation</h3>
+                <p class="doc-link-desc">File formats, probe scores, and result analysis</p>
+              </div>
+            </div>
+          </a>
         </div>
       </section>
 
       <section>
-        <h2 class="heading-2">Technical Details</h2>
-        <div class="warning-box">
-          <p class="info-box-text"><strong>Alignment Engine:</strong> razers3 for fast and accurate short-read alignment</p>
-          <p class="info-box-text"><strong>Host Genomes:</strong> Pre-indexed reference genomes for hosts</p>
-          <p class="info-box-text"><strong>Probe Length Range:</strong> 20-50 nucleotides (default: 30bp)</p>
-          <p class="info-box-text"><strong>Mismatch Tolerance:</strong> 0-2 mismatches (default: 2)</p>
-        </div>
+        <h2 class="heading-2">Version History</h2>
+        <p class="text-body">
+          See the <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/changelog.html" target="_blank" rel="noopener" style="color: #3b82f6; text-decoration: underline;">changelog</a> for a full list of releases, features, and updates.
+        </p>
       </section>
 
       <section>
         <h2 class="heading-2">Use Cases</h2>
         <ul class="unordered-list">
-          <li>Design of highly specific probes for single-cell transcriptomics of host-associated microbiomes</li>
-          <li>Spatial transcriptomics studies to localize microbial transcripts within host tissues</li>
-          <li>Quality control and decontamination of metagenomic assemblies from clinical or environmental samples</li>
-          <li>Decontamination of gut microbiome genome sequences</li>
-          <li>Validation of microbial genome purity by excluding host-derived sequences</li>
-          <li>Pre-processing and probe selection for comparative genomics and functional studies</li>
+          <li>Designing specific oligonucleotide probes for microbial spatial transcriptomics within host tissues</li>
+          <li>Single-cell transcriptomics probe design for host-associated microbiome studies</li>
+          <li>Screening existing probe sets for cross-hybridization against host and co-residing microbiome genomes</li>
+          <li>Quality control of probe specificity before experimental use</li>
         </ul>
       </section>
 

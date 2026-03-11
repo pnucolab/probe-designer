@@ -37,7 +37,7 @@ def generate_candidate_probes(fasta_file, probe_length=30, step_size=3, min_gc=4
 def save_probes_to_fasta(probes, output_file):
     fasta_records = []
     for idx, p in enumerate(probes):
-        probe_id = f"probe_{idx}|start={p['start']}|end={p['end']}|{p['isoform_id']}"
+        probe_id = f"probe_{idx}|start={p['start']}|end={p['end']}|transcript:{p['isoform_id']}"
         fasta_records.append(
             SeqRecord(
                 Seq(p['probe_seq']),

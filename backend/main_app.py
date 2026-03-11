@@ -221,39 +221,39 @@ def get_probe_regions(job_id: str):
 
 def validate_fasta_content(content: bytes, content_type: str) -> tuple[bool, Optional[str]]:
     """Validate FASTA format and DNA alphabet.
-    
+
     Returns: (is_valid, error_message)
     """
     try:
         text = content.decode('utf-8')
     except UnicodeDecodeError:
         return False, "File is not valid UTF-8 text"
-    
+
     lines = text.strip().split('\n')
     if not lines:
         return False, "File is empty"
 
     if not lines[0].startswith('>'):
         return False, "Invalid FASTA format: must start with header line (>)"
-    
+
     has_sequence = False
     for i, line in enumerate(lines, 1):
         line = line.strip()
         if not line:
             continue
-        
+
         if line.startswith('>'):
             if len(line) == 1:
                 return False, f"Empty header at line {i}"
             continue
-        
+
         if not re.match(r'^[ATCGNatcgn]+$', line):
             return False, f"Invalid DNA characters at line {i}. Only ATCGN allowed."
         has_sequence = True
-    
+
     if not has_sequence:
         return False, "No sequence data found in FASTA file"
-    
+
     return True, None
 
 
@@ -262,7 +262,7 @@ async def create_job(
     species: str = Form("human"),
     probe_length: int = Form(30),
     max_mismatches: int = Form(2),
-    kmer_length: int = Form(14),
+    kmer_length: int = Form(18),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
     align_microbiome: str = Form("false"),
@@ -328,7 +328,36 @@ async def create_job(
     is_valid, validation_error = validate_fasta_content(content, input_type)
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"FASTA validation failed: {validation_error}")
-    
+
+    if input_type == 'gene_sequence':
+        lines = gene_sequence.strip().split('\n')
+        current_header = ''
+        current_seq = ''
+        short_seqs = []
+        header_count = 0
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('>'):
+                header_count += 1
+                if current_header and 0 < len(current_seq) < probe_length:
+                    short_seqs.append(f'"{current_header}" ({len(current_seq)} bp)')
+                current_header = stripped[1:].split()[0] if stripped[1:].strip() else 'unnamed'
+                current_seq = ''
+            else:
+                current_seq += stripped.replace(' ', '')
+        if current_header and 0 < len(current_seq) < probe_length:
+            short_seqs.append(f'"{current_header}" ({len(current_seq)} bp)')
+        if header_count > 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only a single FASTA sequence is allowed per job. Found {header_count} sequences. Please submit one sequence at a time."
+            )
+        if short_seqs:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Sequence(s) shorter than probe length ({probe_length} bp): {', '.join(short_seqs)}. Remove short sequences or reduce the probe length."
+            )
+
     job_id = str(uuid.uuid4())
     safe_filename = Path(filename).name
     dest_name = f"{job_id}_{safe_filename}"
@@ -488,18 +517,30 @@ def parse_pipeline_stats(log_path):
         if match:
             stats["total_alignments"] = int(match.group(1).replace(',', ''))
         
+        # Potential on-target = self-aligned safe + non-aligned probes
+        non_aligned = 0
+        self_aligned_safe = 0
         match = re.search(r'Non-aligned probes:\s*([\d,]+)', content)
         if match:
-            stats["non_aligned_probes"] = int(match.group(1).replace(',', ''))
+            non_aligned = int(match.group(1).replace(',', ''))
+        match = re.search(r'Self-aligned safe probes:\s*([\d,]+)', content)
+        if match:
+            self_aligned_safe = int(match.group(1).replace(',', ''))
+        stats["non_aligned_probes"] = self_aligned_safe + non_aligned
+        # Fall back to Initial safe probes for older logs
+        if stats["non_aligned_probes"] == 0:
+            match = re.search(r'Initial safe probes:\s*([\d,]+)', content)
+            if match:
+                stats["non_aligned_probes"] = int(match.group(1).replace(',', ''))
         
-        match = re.search(r'Final safe probes:\s*([\d,]+)', content)
+        match = re.search(r'Total safe probes:\s*([\d,]+)', content)
+        if not match:
+            match = re.search(r'Final safe probes:\s*([\d,]+)', content)
         if match:
             stats["safe_probes"] = int(match.group(1).replace(',', ''))
         
         match = re.search(r'Kept in filtered \(NM<=\d+\):\s*([\d,]+)', content)
-        print(f"DEBUG: Filtered alignments match: {match}")  
         if match:
-            print(f"DEBUG: Captured value: {match.group(1)}")  
             stats["filtered_alignments"] = int(match.group(1).replace(',', ''))
     except (FileNotFoundError, PermissionError, OSError, ValueError):
         logger.exception("Failed to parse pipeline stats from %s", log_path)

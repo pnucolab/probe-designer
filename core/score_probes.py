@@ -11,20 +11,6 @@ from Bio import SeqIO
 from scorer import ThermodynamicProbeScorer
 
 
-def get_quality_label(score, rejected):
-    """Get quality label based on score."""
-    if rejected:
-        return 'Rejected'
-    if score >= 90:
-        return 'Excellent'
-    elif score >= 80:
-        return 'Very Good'
-    elif score >= 70:
-        return 'Good'
-    elif score >= 60:
-        return 'Acceptable'
-    else:
-        return 'Marginal'
 
 def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
     """
@@ -61,9 +47,10 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
     
 
     results = scorer.score_probe_set(sequences)
-    
-    for i, result in enumerate(results):
-        result['probe_id'] = probe_ids[i]
+
+    seq_to_id = {seq: probe_id for seq, probe_id in zip(sequences, probe_ids)}
+    for result in results:
+        result['probe_id'] = seq_to_id[result['sequence']]
  
     output_file = output_csv.replace('.csv', '.txt')
   
@@ -74,34 +61,27 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
         f.write("=" * 245 + "\n\n")
         
         header_parts = [
-            "Rank",
             "Probe ID",
             "Sequence",
-            "Score",
             "Tm(°C)",
             "GC%",
             "Len",
             "Complexity",
             "SecStruct",
-            "Homopoly",
-            "Status"
+            "Homopoly"
         ]
         f.write("  ".join(header_parts) + "\n")
         f.write("-" * 245 + "\n")
-        for rank, result in enumerate(results, 1):
-            quality = get_quality_label(result['on_target_score'], result['rejected'])
+        for result in results:
             row_parts = [
-                str(rank),
                 result['probe_id'],
                 result['sequence'],
-                f"{result['on_target_score']:.2f}",
                 f"{result['tm']:.2f}",
                 f"{result['gc_content']:.1f}",
                 str(result['probe_length']),
                 f"{result['complexity']:.3f}",
                 f"{result['secondary_structure_penalty']:.3f}",
-                'Yes' if result['has_homopolymer'] else 'No',
-                quality
+                'Yes' if result['has_homopolymer'] else 'No'
             ]
             f.write("  ".join(row_parts) + "\n")
         

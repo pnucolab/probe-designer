@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=14, align_microbiome=False, align_host=False):    
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, align_microbiome=False, align_host=False):    
     """
     Run the probe design pipeline.
     
@@ -106,17 +106,6 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             stdin_data = sequence_content
         else:
             raise ValueError(f"Unknown input type: {input_type}")
-        
-        stdin_data = None
-        if input_type == "gene_sequence":
-            cmd.extend(["--probe-length", str(probe_length)])
-            cmd.extend(["--gene-sequence-stdin"])
-            stdin_data = sequence_content
-        elif input_type == "probe_sequence":
-            cmd.extend(["--probe-sequence-stdin"])
-            stdin_data = sequence_content
-        else:
-            raise ValueError(f"Unknown input type: {input_type}")
 
         logger.info("Running command: %s (sequence via stdin)", ' '.join(cmd))
 
@@ -155,35 +144,7 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
                 input_type=input_type
             )
             
-            logger.info("JBrowse files generated successfully:")
-            logger.info("  - Reference FASTA: %s", jbrowse_result.get('reference_fasta'))
-            logger.info("  - Probes GFF3: %s", jbrowse_result.get('probes_gff3'))
-            # if jbrowse_result.get('bam_file'):
-            #     logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
-            #     logger.info("  - BAM index: %s", jbrowse_result['bam_index'])
-            # else:
-            #     logger.warning("  - BAM file was not generated")
-        except Exception as e:
-            logger.error("Failed to generate JBrowse files for job %s: %s", job_id, str(e))
-            logger.exception("JBrowse generation error details:")
-        try:
-            logger.info("Generating JBrowse files for job %s", job_id)
-            
-            jbrowse_result = generate_jbrowse_files(
-                job_id=job_id,
-                output_dir=str(output_dir),
-                gene_sequences_dir=str(ROOT / "gene_sequences"),
-                probe_sequences_dir=str(ROOT / "probe_sequences"),
-                input_type=input_type
-            )
-            
-            #if jbrowse_result.get('bam_file'):
-                #logger.info("  - BAM file: %s", jbrowse_result['bam_file'])
-            #else:
-                #logger.warning("  - BAM file generation failed or skipped")
-            
             logger.info("JBrowse files generated successfully for job %s", job_id)
-            
         except Exception as e:
             logger.error("Failed to generate JBrowse files for job %s: %s", job_id, str(e))
             logger.exception("JBrowse generation error details:")

@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from collections import Counter
 from Bio.SeqUtils import MeltingTemp as mt
 from Bio.SeqUtils import gc_fraction
+import primer3
 
 
 class ThermodynamicProbeScorer:
@@ -103,26 +104,39 @@ class ThermodynamicProbeScorer:
     
     def calculate_secondary_structure_penalty(self, sequence: str) -> float:
         """
-        Estimate secondary structure formation potential.
+        Calculate secondary structure penalty using primer3 thermodynamic engine.
+        Evaluates hairpin and self-dimer formation potential.
+        Returns a penalty between 0.0 (no structure) and 1.0 (strong structure).
         """
         sequence = sequence.upper()
-        
-        penalties = []
-        window_size = 6 
-        
-        for i in range(len(sequence) - window_size + 1):
-            window = sequence[i:i+window_size]
-            window_rc = self._reverse_complement(window)
-            
-            for j in range(len(sequence) - window_size + 1):
-                if i != j:
-                    if sequence[j:j+window_size] == window_rc:
-                        penalties.append(1.0)
-        
-        if len(penalties) == 0:
-            return 0.0
-        else:
-            return min(sum(penalties) / len(sequence), 1.0)
+
+        hairpin = primer3.calc_hairpin(
+            sequence,
+            mv_conc=self.na_conc_mM,
+            dv_conc=0,
+            dntp_conc=0,
+            dna_conc=self.dnac1,
+            temp_c=self.T_celsius
+        )
+
+        homodimer = primer3.calc_homodimer(
+            sequence,
+            mv_conc=self.na_conc_mM,
+            dv_conc=0,
+            dntp_conc=0,
+            dna_conc=self.dnac1,
+            temp_c=self.T_celsius
+        )
+
+        # delta G in cal/mol, convert to kcal/mol
+        hairpin_dg = hairpin.dg / 1000.0
+        homodimer_dg = homodimer.dg / 1000.0
+        worst_dg = min(hairpin_dg, homodimer_dg)
+
+        # More negative dG = more stable secondary structure = higher penalty
+        # Scale: 0 kcal/mol -> 0.0 penalty, -10 kcal/mol or worse -> 1.0 penalty
+        penalty = min(max(0, -worst_dg / 10.0), 1.0)
+        return penalty
     
     def passes_hard_filters(self, sequence: str) -> tuple[bool, Optional[str]]:
         """
