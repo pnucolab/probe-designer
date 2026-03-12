@@ -7,7 +7,7 @@ This script handles two input scenarios:
 
 Usage:
   # Scenario 1: Gene sequence (pasted)
-  python simple_pipeline.py --gene-sequence ">gene1\nATCG..." --species human --probe-length 30 --max-mismatches 2
+  python simple_pipeline.py --gene-sequence ">gene1\nATCG..." --species human --probe-length 36 --max-mismatches 2
   
   # Scenario 2: Probe sequence (pasted)
   python simple_pipeline.py --probe-sequence ">probe1\nATCG..." --species human --max-mismatches 2
@@ -32,8 +32,10 @@ import traceback
 from pathlib import Path
 import shutil
 from Bio import SeqIO
+from Bio.Seq import Seq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
 from score_probes import score_and_save_probes
+from scorer import ThermodynamicProbeScorer
 from probe_classifier import classify_probes_from_sam, infer_source_transcripts
 from smart_kmer_filter import smart_kmer_filter
 
@@ -427,41 +429,96 @@ def generate_14mers(sequence, k=14):
     return [sequence[i:i+k] for i in range(len(sequence) - k + 1)]
 
 
-def check_14mer_safety(probes_file, species, output_base, args, source_transcripts=None):
-    """Check if k-mers from on-target probes have off-target genome matches."""
+def get_jellyfish_db(genome_files, k, species, threads=1):
+    """Get or build a Jellyfish k-mer count database for a species.
+    Database is cached in the species data directory for reuse across runs.
+    Uses -L 2 to only store k-mers appearing 2+ times, reducing DB size.
+    """
+    jellyfish = 'jellyfish'
+    # Cache DB alongside genome data for reuse
+    species_dir = os.path.dirname(genome_files[0])
+    db_path = os.path.join(species_dir, f'kmer_{k}mer_counts.jf')
+
+    if os.path.exists(db_path):
+        print(f"  Using pre-built Jellyfish database: {db_path}")
+        return db_path
+
+    print(f"  Building Jellyfish database (one-time, will be cached for future runs)...")
+    file_list = ' '.join(f"'{f}'" for f in genome_files)
+    cmd = f"cat {file_list} | {jellyfish} count -m {k} -s 5G -t {threads} -L 2 -C -o '{db_path}' /dev/fd/0"
+    proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        print(f"Warning: Jellyfish count failed: {proc.stderr}")
+        return None
+    return db_path
+
+
+def query_jellyfish_db(db_path, kmer_fasta):
+    """Query k-mer counts from a Jellyfish database. Returns dict of {original_kmer: count}.
+    Jellyfish outputs canonical forms, so we read the input FASTA to map back to original k-mers.
+    """
+    jellyfish = 'jellyfish'
+    # Read original k-mer sequences in order
+    original_kmers = []
+    with open(kmer_fasta, 'r', encoding='utf-8') as f:
+        for line in f:
+            if not line.startswith('>'):
+                original_kmers.append(line.strip().upper())
+
+    cmd = [jellyfish, 'query', '-s', kmer_fasta, db_path]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    counts = {}
+    if proc.returncode == 0:
+        lines = [l for l in proc.stdout.strip().split('\n') if l]
+        for i, line in enumerate(lines):
+            parts = line.split()
+            if len(parts) == 2 and i < len(original_kmers):
+                counts[original_kmers[i]] = int(parts[1])
+    return counts
+
+
+def count_source_kmers(source_sequences, k):
+    """Count canonical k-mer occurrences in source sequences (matching Jellyfish -C behavior).
+    Each k-mer on either strand increments the count of its canonical form.
+    Returns counts keyed by BOTH the k-mer and its reverse complement for easy lookup.
+    """
+    canonical_counts = {}
+    for seq in source_sequences:
+        seq_upper = seq.upper()
+        for i in range(len(seq_upper) - k + 1):
+            kmer = seq_upper[i:i+k]
+            rc = str(Seq(kmer).reverse_complement())
+            canonical = min(kmer, rc)
+            canonical_counts[canonical] = canonical_counts.get(canonical, 0) + 1
+
+    # Build lookup that maps both forward and RC to the canonical count
+    counts = {}
+    for canonical, count in canonical_counts.items():
+        rc = str(Seq(canonical).reverse_complement())
+        counts[canonical] = count
+        counts[rc] = count
+    return counts
+
+
+def check_14mer_safety(probes_file, species, output_base, args, source_transcripts=None, input_fasta=None):
+    """Check if k-mers from on-target probes have off-target genome matches using Jellyfish."""
     k = args.kmer_length
     print(f"\nChecking {k}-mer safety for on-target probes...")
     probes = list(SeqIO.parse(probes_file, "fasta"))
     if not probes:
         return probes_file
 
-    all_14mers = []
-    probe_to_14mers = {}
-    mer_to_probe = {}
-    unique_mer_map = {}
-
+    # Generate k-mers per probe
+    probe_to_kmers = {}
+    unique_kmers = set()
     for record in probes:
-        probe_14mers = generate_14mers(str(record.seq), k)
-        probe_to_14mers[record.id] = probe_14mers
-        for i, mer in enumerate(probe_14mers):
-            if mer not in unique_mer_map:
-                unique_mer_map[mer] = []
-            unique_mer_map[mer].append((record.id, i))
+        kmers = generate_14mers(str(record.seq), k)
+        probe_to_kmers[record.id] = kmers
+        unique_kmers.update(kmers)
 
-
-    for mer_seq, probe_list in unique_mer_map.items():
-        mer_id = f"14mer_{len(all_14mers)}"
-        all_14mers.append(mer_seq)
-        mer_to_probe[mer_id] = probe_list
-
-    total_mers = sum(len(v) for v in unique_mer_map.values())
-    print(f"Generated {len(all_14mers)} unique k-mers from {len(probes)} probes")
-    print(f"  Total k-mers: {total_mers}, Unique: {len(all_14mers)}, Duplicates removed: {total_mers - len(all_14mers)} ({(total_mers-len(all_14mers))/total_mers*100:.1f}%)")
-
-    temp_14mer_file = f'{output_base}/temp_14mers.fa'
-    with open(temp_14mer_file, 'w', encoding='utf-8') as f:
-        for i, mer in enumerate(all_14mers):
-            f.write(f">14mer_{i}\n{mer}\n")
+    total_mers = sum(len(v) for v in probe_to_kmers.values())
+    print(f"Generated {len(unique_kmers)} unique k-mers from {len(probes)} probes")
+    print(f"  Total k-mers: {total_mers}, Unique: {len(unique_kmers)}, Duplicates removed: {total_mers - len(unique_kmers)} ({(total_mers-len(unique_kmers))/total_mers*100:.1f}%)")
 
     microbiome_species_list = ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome",
                             "human-vaginal-microbiome", "mouse-gut-microbiome"]
@@ -491,51 +548,66 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
         print(f"Warning: No genome files found for {k}-mer safety check")
         return probes_file
 
-    razers = os.path.join('bin', 'razers3')
-    align_dir_14mer = f'{output_base}/14mer_align'
-    os.makedirs(align_dir_14mer, exist_ok=True)
+    threads = args.parallelism or cpu_count()
 
-    match_details = []
+    # Get or build Jellyfish database (cached per species)
+    print(f"Loading Jellyfish {k}-mer database for {species} ({len(chrom_files)} genome files)...")
+    db_start = time.time()
+    db_path = get_jellyfish_db(chrom_files, k, species, threads)
+    if not db_path:
+        print("Error: Failed to get Jellyfish database, falling back to no k-mer filter")
+        return probes_file
+    db_elapsed = time.time() - db_start
+    print(f"  Jellyfish database ready in {db_elapsed:.2f}s")
 
-    def align_14mer_chrom(chrom_fasta):
-        base = os.path.splitext(os.path.basename(chrom_fasta))[0]
-        out_sam = os.path.join(align_dir_14mer, f'{base}_14mer.sam')
-        cmd = [razers, '-ng', '-i', '100', '-rr', '100', '-m', '100', '-tc', '1', '-o', out_sam, chrom_fasta, temp_14mer_file]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    # Write unique k-mers to FASTA for querying
+    temp_kmer_file = os.path.join(output_base, 'temp_kmers.fa')
+    kmer_list = sorted(unique_kmers)
+    with open(temp_kmer_file, 'w', encoding='utf-8') as f:
+        for i, kmer in enumerate(kmer_list):
+            f.write(f">kmer_{i}\n{kmer}\n")
 
-        local_matches = []
-        if proc.returncode == 0 and os.path.exists(out_sam):
-            with open(out_sam, 'r', encoding='utf-8') as f:
-                for line in f:
-                    if not line.startswith('@'):
-                        parts = line.split('\t')
-                        if len(parts) >= 4:
-                            mer_id = parts[0]
-                            chromosome = parts[2]
-                            position = parts[3]
-                            local_matches.append((mer_id, chromosome, position))
-        return local_matches
+    # Query all k-mers against genome database
+    print("Querying k-mer counts from genome database...")
+    query_start = time.time()
+    genome_counts = query_jellyfish_db(db_path, temp_kmer_file)
+    query_elapsed = time.time() - query_start
+    print(f"  Queried {len(genome_counts)} k-mers in {query_elapsed:.2f}s")
 
-    print("Aligning k-mers to genome...")
-    with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism or cpu_count()) as ex:
-        futures = [ex.submit(align_14mer_chrom, cf) for cf in chrom_files]
-        for fut in concurrent.futures.as_completed(futures):
-            match_details.extend(fut.result())
+    # Count k-mer occurrences in source sequences for self-match exclusion
+    source_counts = {}
+    if input_fasta and os.path.exists(input_fasta):
+        source_seqs = [str(rec.seq) for rec in SeqIO.parse(input_fasta, "fasta")]
+        source_counts = count_source_kmers(source_seqs, k)
+        print(f"  Counted {len(source_counts)} k-mers in source sequence for self-match exclusion")
 
-    print(f"Found {len(match_details)} {k}-mer matches")
-    unsafe_probes, probe_match_details, _ = smart_kmer_filter(
-        match_details=match_details,
-        mer_to_probe=mer_to_probe,
-        probes=probes,
-        k=k,
-        species=species,
-        output_base=output_base,
-        chrom_files=chrom_files,
-        razers=razers,
-        args=args,
-        source_transcripts=source_transcripts
-    )
+    # Filter probes: a probe is unsafe if any of its k-mers has off-target matches
+    unsafe_probes = set()
+    probe_match_details = {}
+    total_self_matches = 0
+    total_other_matches = 0
 
+    for probe_id, kmers in probe_to_kmers.items():
+        for kmer in kmers:
+            genome_count = genome_counts.get(kmer, 0)
+            source_count = source_counts.get(kmer, 0)
+            off_target = genome_count - source_count
+
+            if off_target > 0:
+                total_other_matches += 1
+                unsafe_probes.add(probe_id)
+                if probe_id not in probe_match_details:
+                    probe_match_details[probe_id] = {'total_matches': 0}
+                probe_match_details[probe_id]['total_matches'] += 1
+            elif genome_count > 0:
+                total_self_matches += 1
+
+    print(f"K-mer filtering complete:")
+    print(f"  Self-gene matches (excluded): {total_self_matches:,}")
+    print(f"  Other-gene matches: {total_other_matches:,}")
+    print(f"  Unsafe probes (off-target k-mer matches): {len(unsafe_probes)}")
+
+    # Write report
     report_start = time.time()
     match_report_file = f'{output_base}/kmer_matches_report.txt'
 
@@ -547,8 +619,7 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
         f.write("=" * 80 + "\n\n")
         f.write(f"Total probes checked: {len(probes)}\n")
         f.write(f"Unsafe probes (k-mer matches): {len(unsafe_probes)}\n")
-        f.write(f"Safe probes (no matches): {len(safe_probes_ids)}\n")
-        f.write(f"Total {k}-mer matches found: {len(match_details):,}\n\n")
+        f.write(f"Safe probes (no matches): {len(safe_probes_ids)}\n\n")
 
         f.write("=" * 80 + "\n")
         f.write("UNSAFE PROBES\n")
@@ -557,20 +628,15 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
             if probe_id in probe_match_details:
                 d = probe_match_details[probe_id]
                 f.write(f"{probe_id}:\n")
-                f.write(f"  Total matches: {d['total_matches']}\n\n")
+                f.write(f"  Total off-target k-mer matches: {d['total_matches']}\n\n")
 
         f.write("\n" + "=" * 80 + "\n")
         f.write("SAFE PROBES\n")
         f.write("=" * 80 + "\n\n")
 
         for probe_id in sorted(safe_probes_ids):
-            if probe_id in probe_match_details:
-                d = probe_match_details[probe_id]
-                f.write(f"{probe_id}:\n")
-                f.write(f"  Total matches: {d['total_matches']}\n\n")
-            else:
-                f.write(f"{probe_id}:\n")
-                f.write(f"  Total matches: 0\n\n")
+            f.write(f"{probe_id}:\n")
+            f.write(f"  Off-target k-mer matches: 0\n\n")
 
     report_elapsed = time.time() - report_start
     print(f"Report generation took {report_elapsed:.2f}s")
@@ -578,6 +644,7 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     safe_probes_file = f'{output_base}/safe_probes.fa'
     safe_probes = [p for p in probes if p.id not in unsafe_probes]
 
+    # Secondary host check for microbiome species
     host_species = None
     if species in microbiome_species_list and args.align_microbiome and args.align_host:
         if species == "mouse-gut-microbiome":
@@ -585,63 +652,43 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
         else:
             host_species = "human"
 
-        print(f"\nSecondary safety check: Aligning safe probe k-mers against {host_species} transcripts...")
+        print(f"\nSecondary safety check: Checking safe probe k-mers against {host_species} transcripts...")
 
     if host_species:
-        safe_probe_ids = {p.id for p in safe_probes}
-        safe_14mers = []
-        safe_mer_to_probe = {}
-
-        for mer_id, probe_list in mer_to_probe.items():
-            mer_seq = all_14mers[int(mer_id.split('_')[1])]
-            safe_probes_for_this_mer = [(pid, pos) for pid, pos in probe_list if pid in safe_probe_ids]
-
-            if safe_probes_for_this_mer:
-                safe_14mers.append(mer_seq)
-                new_mer_id = f"safe_14mer_{len(safe_14mers)-1}"
-                safe_mer_to_probe[new_mer_id] = safe_probes_for_this_mer
-
-        print(f"  Using {len(safe_14mers)} pre-generated k-mers from {len(safe_probes)} safe probes")
-
-        temp_safe_14mer = f'{output_base}/temp_safe_14mers.fa'
-        with open(temp_safe_14mer, 'w', encoding='utf-8') as f:
-            for i, mer in enumerate(safe_14mers):
-                f.write(f">safe_14mer_{i}\n{mer}\n")
-
         host_chrom_dir = os.path.join('data', 'gencode_data', host_species, 'transcript_chunks')
         if os.path.exists(host_chrom_dir):
             host_chrom_files = [os.path.join(host_chrom_dir, f) for f in os.listdir(host_chrom_dir) if f.endswith('.fa')]
 
-            host_align_dir = f'{output_base}/14mer_host_align'
-            os.makedirs(host_align_dir, exist_ok=True)
+            # Get or build host Jellyfish database (cached)
+            print(f"  Loading {host_species} Jellyfish database...")
+            host_db_path = get_jellyfish_db(host_chrom_files, k, host_species, threads)
+            if not host_db_path:
+                print(f"  Warning: Failed to build {host_species} Jellyfish database, skipping host check")
+                host_species = None
 
-            host_matches = []
+            # Collect k-mers from safe probes only
+            safe_probe_ids = {p.id for p in safe_probes}
+            safe_kmers = set()
+            safe_kmer_to_probes = {}
+            for probe_id in safe_probe_ids:
+                for kmer in probe_to_kmers[probe_id]:
+                    safe_kmers.add(kmer)
+                    if kmer not in safe_kmer_to_probes:
+                        safe_kmer_to_probes[kmer] = []
+                    safe_kmer_to_probes[kmer].append(probe_id)
 
-            def align_safe_14mer_host(chrom_fasta):
-                base = os.path.splitext(os.path.basename(chrom_fasta))[0]
-                out_sam = os.path.join(host_align_dir, f'{base}_safe_14mer.sam')
-                cmd = [razers, '-ng', '-i', '100', '-rr', '100', '-m', '100', '-tc', '1', '-o', out_sam, chrom_fasta, temp_safe_14mer]
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            temp_safe_kmer_file = os.path.join(output_base, 'temp_safe_kmers.fa')
+            with open(temp_safe_kmer_file, 'w', encoding='utf-8') as f:
+                for i, kmer in enumerate(sorted(safe_kmers)):
+                    f.write(f">kmer_{i}\n{kmer}\n")
 
-                local_matches = []
-                if proc.returncode == 0 and os.path.exists(out_sam):
-                    with open(out_sam, 'r', encoding='utf-8') as f:
-                        for line in f:
-                            if not line.startswith('@'):
-                                parts = line.split('\t')
-                                if len(parts) >= 4:
-                                    local_matches.append((parts[0], parts[2], parts[3]))
-                return local_matches
+            host_counts = query_jellyfish_db(host_db_path, temp_safe_kmer_file)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=args.parallelism or cpu_count()) as ex:
-                futures = [ex.submit(align_safe_14mer_host, cf) for cf in host_chrom_files]
-                for fut in concurrent.futures.as_completed(futures):
-                    host_matches.extend(fut.result())
-
+            # Any k-mer with count > 0 in host means probe matches host
             host_unsafe = set()
-            for mer_id, _, _ in host_matches:
-                if mer_id in safe_mer_to_probe:
-                    for probe_id, _ in safe_mer_to_probe[mer_id]:
+            for kmer, count in host_counts.items():
+                if count > 0 and kmer in safe_kmer_to_probes:
+                    for probe_id in safe_kmer_to_probes[kmer]:
                         host_unsafe.add(probe_id)
 
             safe_probes = [p for p in safe_probes if p.id not in host_unsafe]
@@ -649,7 +696,7 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
             print(f"  Probes matching {host_species} transcripts: {len(host_unsafe)}")
             print(f"  Final safe probes after {host_species} check: {len(safe_probes)}")
 
-            os.remove(temp_safe_14mer)
+            os.remove(temp_safe_kmer_file)
         else:
             print(f"  Warning: {host_species.capitalize()} transcript directory not found, skipping host check")
 
@@ -662,7 +709,8 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     print(f"  Safe probes written to: {safe_probes_file}")
     print(f"  Match details report: {match_report_file}")
 
-    os.remove(temp_14mer_file)
+    # Cleanup temp file (DB is cached for reuse)
+    os.remove(temp_kmer_file)
 
     return safe_probes_file
     
@@ -678,19 +726,28 @@ def main():
     input_group.add_argument("--probe-sequence-stdin", action="store_true", help="Read probe sequence from stdin")
 
     parser.add_argument("--species", "-s", default="human", help="Species (human or mouse)")
-    parser.add_argument("--probe-length", type=int, default=30, help="Probe length (auto-detected if probes provided)")
+    parser.add_argument("--probe-length", type=int, default=36, help="Probe length (auto-detected if probes provided)")
     parser.add_argument("--max-mismatches", type=int, default=2, help="Max mismatches allowed in alignments")
     parser.add_argument("--parallelism", "-p", type=int, default=None, help="Number of parallel worker threads")
     parser.add_argument("--task-id", help="Task ID for organizing outputs")
-    parser.add_argument("--kmer-length", type=int, default=18, help="K-mer length for safety check")
+    parser.add_argument("--kmer-length", type=int, default=18,
+                       help="K-mer length for safety check (minimum: 14, default: 18)")
     parser.add_argument("--skip-annotation", action="store_true",
                        help="Skip gene name annotation of SAM files")
     parser.add_argument("--align-microbiome", action="store_true", default=False,
                    help="Align against microbiome genomes")
     parser.add_argument("--align-host", action="store_true", default=False,
                     help="Align against host transcriptome")
-    
+    parser.add_argument("--tm-range", type=str, default="42-47",
+                    help="Tm filter range in °C, e.g. 42-47 (default: 42-47)")
+
     args = parser.parse_args()
+    if args.kmer_length < 14:
+        print(f"Error: K-mer length {args.kmer_length} is too small. Minimum k-mer length is 14.")
+        sys.exit(1)
+    if args.kmer_length > args.probe_length:
+        print(f"Error: K-mer length ({args.kmer_length}) exceeds probe length ({args.probe_length}). Please adjust k-mer length and try again.")
+        sys.exit(1)
     if args.gene_sequence_stdin:
         args.gene_sequence = sys.stdin.read()
     elif args.probe_sequence_stdin:
@@ -842,6 +899,32 @@ def main():
         ]
         if not run(gen_cmd, 'Generate candidate probes', check_output_file=probes_out):
             return False
+
+    # Tm and homopolymer filter: remove probes outside Tm range or with homopolymer runs
+    tm_min, tm_max = [float(x) for x in args.tm_range.split('-')]
+    scorer = ThermodynamicProbeScorer()
+    candidates = list(SeqIO.parse(probes_out, 'fasta'))
+    passed = []
+    tm_rejected = 0
+    homopolymer_rejected = 0
+    for record in candidates:
+        seq = str(record.seq)
+        tm = scorer.calculate_tm(seq)
+        if not (tm_min <= tm <= tm_max):
+            tm_rejected += 1
+            continue
+        if scorer.check_homopolymer_runs(seq):
+            homopolymer_rejected += 1
+            continue
+        passed.append(record)
+    print(f"\nTm filter ({tm_min}-{tm_max}°C): rejected {tm_rejected}/{len(candidates)} probes")
+    print(f"Homopolymer filter (≥{scorer.max_homopolymer}bp runs): rejected {homopolymer_rejected}/{len(candidates)} probes")
+    print(f"Passed both filters: {len(passed)}/{len(candidates)} probes")
+    if len(passed) == 0:
+        print("No probes passed Tm and homopolymer filters")
+        return False
+    with open(probes_out, 'w') as f:
+        SeqIO.write(passed, f, 'fasta')
 
     razers = os.path.join('bin', 'razers3')
     if not os.path.exists(razers):
@@ -1044,7 +1127,8 @@ def main():
         print(f"  ({self_aligned_safe_count:,} self-aligned + {non_aligned_count:,} non-aligned)")
         kmer_result_file = check_14mer_safety(
             non_aligned_probes_fa, args.species, output_base, args,
-            source_transcripts=source_transcripts
+            source_transcripts=source_transcripts,
+            input_fasta=input_fasta
         )
         total_safe_count = len(list(SeqIO.parse(kmer_result_file, 'fasta')))
     else:
@@ -1086,13 +1170,11 @@ def main():
     if total_safe_count > 0:
         print(f'Safe probes FASTA: {safe_probes_file}')
         print(f'Safe probes scores: {safe_scores_csv}')
-    if non_aligned_count > 0:
+    if total_on_target > 0:
         print(f'k-mer match report: {output_base}/kmer_matches_report.txt')
     
     cleanup_dirs = [
-        os.path.join(output_base, '14mer_align'),
         os.path.join(output_base, 'chroms'),
-        os.path.join(output_base, '14mer_host_align')
     ]
     
     for cleanup_dir in cleanup_dirs:

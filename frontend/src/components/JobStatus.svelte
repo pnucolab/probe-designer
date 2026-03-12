@@ -31,7 +31,6 @@
   let safeProbesFetched = false;
   let tmFilter = '';
   let gcFilter = '';
-  let homopolymerFilter = 'all';
   let safeProbesPage = 1;
   let safeProbesPageSize = 10;
   let safeProbesPageSizeOptions = [10, 25, 50, 100];
@@ -212,7 +211,6 @@
                     length: parseInt(parts[4]),
                     complexity: parseFloat(parts[5]),
                     sec_struct: parseFloat(parts[6]),
-                    homopoly: parts[7]
                   };
                   expandedProbeAlignments = [{
                     type: 'scoring_data',
@@ -319,7 +317,6 @@
               length: parseInt(parts[4]),
               complexity: parseFloat(parts[5]),
               sec_struct: parseFloat(parts[6]),
-              homopolymer: parts[7]
             };
 
             probes.push(probe);
@@ -362,12 +359,6 @@
         } else {
           if (!probe.gc_content.toFixed(1).startsWith(val)) return false;
         }
-      }
-      
-      if (homopolymerFilter !== 'all') {
-        console.log('Homopolymer filter:', homopolymerFilter, 'Probe value:', probe.homopolymer);
-        if (homopolymerFilter === 'no' && probe.homopolymer !== 'No') return false;
-        if (homopolymerFilter === 'yes' && probe.homopolymer === 'No') return false;
       }
       
       return true;
@@ -602,12 +593,12 @@
     if (probe.status === 'safe') {
       return 'No off-target alignments';
     } else if (probe.status === 'high_risk') {
-      return `High Risk (${probe.mismatches} mismatch${probe.mismatches !== 1 ? 'es' : ''})`;
+      return `High Risk (has exact matches with other gene)`;
     } else if (probe.status === 'medium_risk') {
       if (probe.mismatches === undefined || probe.mismatches === null) {
         return 'Medium Risk (Failed k-mer safety analysis)';
       }
-      return `Medium Risk (${probe.mismatches} mismatches)`;
+      return `Medium Risk (off-target matches with 1-2 mismatches)`;
     } else {
       return 'Unknown';
     }
@@ -634,11 +625,10 @@
 
   function downloadFilteredProbes() {
     if (filteredSafeProbes.length === 0) return;
-    const headers = ['Probe ID', 'Sequence', 'Tm', 'GC%', 'Complexity', 'Sec. Struct', 'Homopolymer'];
+    const headers = ['Probe ID', 'Sequence', 'Tm', 'GC%', 'Complexity', 'Sec. Struct'];
     const rows = filteredSafeProbes.map(p => [
       p.probe_id, p.sequence, p.tm.toFixed(1),
-      p.gc_content.toFixed(1), p.complexity.toFixed(2), p.sec_struct.toFixed(2),
-      p.homopolymer
+      p.gc_content.toFixed(1), p.complexity.toFixed(2), p.sec_struct.toFixed(2)
     ].join('\t'));
     const tsv = [headers.join('\t'), ...rows].join('\n');
     const blob = new Blob([tsv], { type: 'text/tab-separated-values' });
@@ -742,10 +732,10 @@
     >
       <thead>
         <tr style="background:#f3f4f6;">
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Candidate Probes (40–80% GC content)</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Candidate Probes</th>
           <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Potential On-target Probes</th>
           <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">Total Safe Probes </th>
-          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">K-mer Safety Analysis Result</th>
+          <th style="padding:10px; border:1px solid #d1d5db; text-align:center; font-weight:700;">K-mer Filter Result</th>
         </tr>
       </thead>
 
@@ -858,7 +848,7 @@
                   Showing {((safeProbesPage - 1) * safeProbesPageSize) + 1}-{Math.min(safeProbesPage * safeProbesPageSize, filteredSafeProbes.length)} of {filteredSafeProbes.length} probes
                 </div>
                 <div style="display:flex; align-items:center; gap:12px;">
-                  {#if tmFilter.trim() || gcFilter.trim() || homopolymerFilter !== 'all'}
+                  {#if tmFilter.trim() || gcFilter.trim()}
                     <button
                       on:click={downloadFilteredProbes}
                       style="padding:4px 10px; background:#0ea5e9; color:white; border:none; border-radius:4px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:4px;"
@@ -908,18 +898,6 @@
                     </th>
                     <th style="padding:10px; text-align:center;">Complexity</th>
                     <th style="padding:10px; text-align:center;">Sec. Struct</th>
-                    <th style="padding:10px; text-align:center; position:relative;">
-                      <div style="margin-bottom:4px;">Homopolymer</div>
-                      <select
-                        on:change={(e) => {homopolymerFilter = e.target.value; filterSafeProbes();}}
-                        value={homopolymerFilter}
-                        style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white;"
-                      >
-                        <option value="all">All</option>
-                        <option value="yes">Yes</option>
-                        <option value="no">No</option>
-                      </select>
-                    </th>
                   </tr>
                 </thead>
                 <tbody>
@@ -931,7 +909,6 @@
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.gc_content.toFixed(1)}</td>
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.complexity.toFixed(2)}</td>
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.sec_struct.toFixed(2)}</td>
-                      <td style="padding:10px; text-align:center;">{probe.homopolymer}</td>
                     </tr>
                   {/each}
                 </tbody>
@@ -1109,10 +1086,6 @@
                       <td style="padding:8px; font-weight:600;">Secondary Structure</td>
                       <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.sec_struct.toFixed(3)}</td>
                     </tr>
-                    <tr style="border-bottom:1px solid #e5e7eb;">
-                      <td style="padding:8px; font-weight:600;">Homopolymer</td>
-                      <td style="padding:8px; text-align:center;">{expandedProbeAlignments[0].data.homopoly}</td>
-                    </tr>
                   </tbody>
                 </table>
                 
@@ -1131,7 +1104,7 @@
             {#if expandedProbe.status === 'medium_risk'}
               <div style="padding:20px; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; text-align:center; color:#92400e;">
                 <p style="margin:0; font-weight:600;">Failed k-mer safety analysis</p>
-                <p style="margin:8px 0 0 0; font-size:13px;">This probe has k-mer matches in other genes.</p>
+                <p style="margin:8px 0 0 0; font-size:13px;">No full-length off-target matches, but contains short k-mer segments shared with other genes.</p>
               </div>
             {:else}
               <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">

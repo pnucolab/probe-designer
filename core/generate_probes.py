@@ -16,7 +16,7 @@ def calculate_gc_content(sequence):
     gc_percentage = (g_count + c_count) / total_length * 100
     return gc_percentage
 
-def generate_candidate_probes(fasta_file, probe_length=30, step_size=3, min_gc=40, max_gc=80):
+def generate_candidate_probes(fasta_file, probe_length=36, step_size=3, min_gc=40, max_gc=80):
     candidate_probes = []
     total_checked = 0
     for record in SeqIO.parse(fasta_file, "fasta"):
@@ -49,8 +49,8 @@ def save_probes_to_fasta(probes, output_file):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate candidate probes from FASTA sequences")
-    parser.add_argument("--probe-length", type=int, default=30,
-                        help="Length of probes to generate (default: 30)")
+    parser.add_argument("--probe-length", type=int, default=36,
+                        help="Length of probes to generate (default: 36)")
     parser.add_argument("--step-size", type=int, default=1,
                         help="Step size for sliding window (default: 1)")
     parser.add_argument("--min-gc", type=float, default=40,

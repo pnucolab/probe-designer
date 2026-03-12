@@ -260,13 +260,14 @@ def validate_fasta_content(content: bytes, content_type: str) -> tuple[bool, Opt
 @app.post("/jobs", response_model=JobResponse, summary="Create probe design job")
 async def create_job(
     species: str = Form("human"),
-    probe_length: int = Form(30),
+    probe_length: int = Form(36),
     max_mismatches: int = Form(2),
     kmer_length: int = Form(18),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
     align_microbiome: str = Form("false"),
-    align_host: str = Form("false"), 
+    align_host: str = Form("false"),
+    tm_range: str = Form("42-47"),
 ):
     
     input_type = 'gene' if gene_sequence.strip() else ('probe' if probe_sequence.strip() else 'none')
@@ -382,6 +383,7 @@ async def create_job(
         'storage_dir': str(storage_dir),
         'align_microbiome': align_microbiome.lower() == 'true',
         'align_host': align_host.lower() == 'true',
+        'tm_range': tm_range,
     }
     
     try:
@@ -509,9 +511,13 @@ def parse_pipeline_stats(log_path):
         with open(log_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        match = re.search(r'Found ([\d,]+) candidate probes passing GC filter', content)
+        match = re.search(r'Passed both filters: ([\d,]+)/', content)
         if match:
             stats["candidate_probes"] = int(match.group(1).replace(',', ''))
+        else:
+            match = re.search(r'Found ([\d,]+) candidate probes passing GC filter', content)
+            if match:
+                stats["candidate_probes"] = int(match.group(1).replace(',', ''))
         
         match = re.search(r'Total alignments scanned:\s*([\d,]+)', content)
         if match:

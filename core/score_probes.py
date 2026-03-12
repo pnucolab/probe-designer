@@ -15,15 +15,15 @@ from scorer import ThermodynamicProbeScorer
 def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
     """
     Score all probes in a FASTA file and save results to formatted table.
-    
+
     Args:
         fasta_file: Path to input FASTA file with probe sequences
         output_csv: Path to output file for scores (will be .txt format)
-        
+
     Returns:
         Number of probes scored
     """
-   
+
     scorer = ThermodynamicProbeScorer(
         temperature_celsius=37.0,
         formamide_percent=50.0,
@@ -34,32 +34,32 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
         max_homopolymer=5,
         enable_hard_filters=True
     )
-    
+
     sequences = []
     probe_ids = []
     for record in SeqIO.parse(fasta_file, "fasta"):
         sequences.append(str(record.seq))
         probe_ids.append(record.id)
-    
+
     if not sequences:
         print(f"No sequences found in {fasta_file}")
         return 0
-    
+
 
     results = scorer.score_probe_set(sequences)
 
     seq_to_id = {seq: probe_id for seq, probe_id in zip(sequences, probe_ids)}
     for result in results:
         result['probe_id'] = seq_to_id[result['sequence']]
- 
+
     output_file = output_csv.replace('.csv', '.txt')
-  
+
     with open(output_file, 'w', encoding='utf-8') as f:
-       
+
         f.write("=" * 245 + "\n")
         f.write("NON-ALIGNED PROBE SCORING RESULTS\n")
         f.write("=" * 245 + "\n\n")
-        
+
         header_parts = [
             "Probe ID",
             "Sequence",
@@ -84,7 +84,7 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
                 'Yes' if result['has_homopolymer'] else 'No'
             ]
             f.write("  ".join(row_parts) + "\n")
-        
+
 
     print(f"\nScored {len(results)} probes")
     print(f"Results saved to: {output_file}")

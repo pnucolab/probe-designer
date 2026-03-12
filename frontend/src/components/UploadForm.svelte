@@ -56,6 +56,7 @@ GCCGCCTTCTTCGGCATATC`;
   let alignHost = true;  
   let probe_length = '';
   let max_mismatches = '';
+  let tmRange = '';
   let uploading = false;
   let error = ''; 
   $: hostLabel = species === 'mouse' ? 'Mouse Transcriptome' : 'Human Transcriptome';
@@ -101,7 +102,7 @@ GCCGCCTTCTTCGGCATATC`;
     }
 
     if (inputType === 'gene') {
-      const effectiveProbeLength = probe_length || 30;
+      const effectiveProbeLength = probe_length || 36;
       const lines = sequenceToSubmit.split('\n');
       let currentHeader = '';
       let currentSeq = '';
@@ -150,10 +151,11 @@ GCCGCCTTCTTCGGCATATC`;
     form.append('align_microbiome', alignMicrobiome ? 'true' : 'false');
     form.append('align_host', alignHost ? 'true' : 'false'); 
     if (inputType === 'gene') {
-      form.append('probe_length', String(probe_length || 30));
+      form.append('probe_length', String(probe_length || 36));
     }
     form.append('kmer_length', String(kmerLength || 18));
     form.append('max_mismatches', String(max_mismatches || 2));
+    form.append('tm_range', tmRange || '42-47');
 
     console.log('Form data being sent:');
     for (let [key, value] of form.entries()) {
@@ -291,7 +293,7 @@ GCCGCCTTCTTCGGCATATC`;
        {#if inputType === 'gene'}
           <div>
             <label for="probe_length" class="label-text">Probe Length (bp)</label>
-            <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 30)" class="number-input" />        </div>
+            <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 36)" class="number-input" />        </div>
         {/if}
         <div>
           <label for="kmer_length" class="label-text">K-mer Length (bp)</label>
@@ -299,7 +301,11 @@ GCCGCCTTCTTCGGCATATC`;
         </div>
         <div>
           <label for="max_mismatches" class="label-text">Max Mismatches</label>
-          <input id="max_mismatches" type="number" min="0" max="2" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />      
+          <input id="max_mismatches" type="number" min="0" max="2" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />
+        </div>
+        <div>
+          <label for="tm_range" class="label-text">Tm Range (°C)</label>
+          <input id="tm_range" type="text" bind:value={tmRange} placeholder="Default: 42-47" class="number-input" />
         </div>
       </div>
     </div>
