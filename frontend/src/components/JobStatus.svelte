@@ -75,10 +75,11 @@
     
     for (const aln of alignments) {
       if (!currentGroup || currentGroup.probe_id !== aln.probe_id) {
+        const rawSeq = aln.sequence ? aln.sequence.toUpperCase().replace(/-/g, '') : '';
         currentGroup = {
           probe_id: aln.probe_id,
-          sequence: aln.sequence,
-          gc_content: calculateGC(aln.sequence),
+          sequence: rawSeq,
+          gc_content: calculateGC(rawSeq),
           alignments: []
         };
         groups.push(currentGroup);
@@ -90,7 +91,8 @@
         mismatches: aln.mismatches,
         position: aln.position,
         strand: aln.strand,
-        species: aln.species
+        species: aln.species,
+        sequence: aln.sequence
       });
     }
     
@@ -719,7 +721,7 @@
           </div>
         </div>
       </div>
-    {/if}
+    {:else}
     <table
       style="
         width:100%;
@@ -801,6 +803,7 @@
         </tr>
       </tbody>
     </table>
+    {/if}
   </div>
 {/if}
   
@@ -981,12 +984,12 @@
     </div>
   {/if}
   
-  {#if status === 'SUCCESS' && sequenceLength > 0 && inputType === 'gene_sequence'}
+  {#if status === 'SUCCESS' && sequenceLength > 0 && inputType === 'gene_sequence' && info.stats.candidate_probes > 0}
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
-      
-      <JBrowseViewer 
-        {jobId} 
+
+      <JBrowseViewer
+        {jobId}
         {referenceId}
         {sequenceLength}
         onFeatureClick={handleFeatureClick}
@@ -1176,27 +1179,29 @@
       
     </div>
   {/if}
-  {#if status === 'SUCCESS' && inputType === 'probe_sequence'}
+  {#if status === 'SUCCESS' && inputType === 'probe_sequence' && info.stats.candidate_probes > 0}
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
       
-      <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
-        <label for="mismatch-filter" style="font-size:14px; color:#374151;">Filter by mismatches:</label>
-        <select 
-          id="mismatch-filter"
-          on:change={(e) => onMismatchFilterChange(e.target.value)}
-          style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
-        >
-          <option value="all">All</option>
-          <option value="0">0 mismatches</option>
-          <option value="1">1 mismatch</option>
-          <option value="2">2 mismatches</option>
-          <option value="3">3 mismatches</option>
-        </select>
-        <span style="margin-left:auto; font-size:14px; color:#6b7280;">
-          {totalAlignments.toLocaleString()} total alignments
-        </span>
-      </div>
+      {#if totalAlignments > 0}
+        <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
+          <label for="mismatch-filter" style="font-size:14px; color:#374151;">Filter by mismatches:</label>
+          <select
+            id="mismatch-filter"
+            on:change={(e) => onMismatchFilterChange(e.target.value)}
+            style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
+          >
+            <option value="all">All</option>
+            <option value="0">0 mismatches</option>
+            <option value="1">1 mismatch</option>
+            <option value="2">2 mismatches</option>
+            <option value="3">3 mismatches</option>
+          </select>
+          <span style="margin-left:auto; font-size:14px; color:#6b7280;">
+            {totalAlignments.toLocaleString()} total alignments
+          </span>
+        </div>
+      {/if}
 
       {#if groupedAlignments.length > 0}
         <div style="overflow-x:auto; border:1px solid #e5e7eb; border-radius:6px;">
@@ -1228,14 +1233,14 @@
                       <td style="padding:10px; text-align:center; font-family:monospace; vertical-align:top;" rowspan={group.alignments.length}>
                         {group.gc_content}
                       </td>
-                      <td style="padding:10px; vertical-align:top;" rowspan={group.alignments.length}>
-                        <div style="font-family:monospace; font-size:11px; line-height:1.5; word-break:break-all;">
-                          {#each formatSequenceWithHighlights(group.sequence) as {char, isLowercase, isDash}}
-                            <span class:lowercase={isLowercase} class:dash={isDash}>{char}</span>
-                          {/each}
-                        </div>
-                      </td>
                     {/if}
+                    <td style="padding:10px; vertical-align:top;">
+                      <div style="font-family:monospace; font-size:11px; line-height:1.5; word-break:break-all;">
+                        {#each formatSequenceWithHighlights(aln.sequence) as {char, isLowercase, isDash}}
+                          <span class:lowercase={isLowercase} class:dash={isDash}>{char}</span>
+                        {/each}
+                      </div>
+                    </td>
                     <td style="padding:10px; font-family:monospace; color:#374151;">
                       {aln.target_transcript}
                     </td>

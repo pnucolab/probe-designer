@@ -24,6 +24,8 @@ def generate_candidate_probes(fasta_file, probe_length=36, step_size=3, min_gc=4
         for i in range(0, len(seq) - probe_length + 1, step_size):
             probe = seq[i:i + probe_length]
             total_checked += 1
+            if 'N' in probe:
+                continue
             gc_content = calculate_gc_content(probe)
             if min_gc <= gc_content <= max_gc:
                 candidate_probes.append({

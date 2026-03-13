@@ -255,6 +255,9 @@ def count_and_filter_gc(fasta_file, min_gc=40, max_gc=80):
     
     for record in SeqIO.parse(fasta_file, "fasta"):
         seq = str(record.seq).upper()
+        if 'N' in seq:
+            count += 1
+            continue
         gc = (seq.count('G') + seq.count('C')) / len(seq) * 100
         if min_gc <= gc <= max_gc:
             passing.append(record)
@@ -500,6 +503,23 @@ def count_source_kmers(source_sequences, k):
     return counts
 
 
+def find_source_genome_sequences(chrom_files, source_transcripts):
+    """Find all sequences from the source genome in the database chunk files.
+    E.g., if source transcript is MGYG000000001_1, find all MGYG000000001_* contigs."""
+    source_prefixes = set()
+    for tid in source_transcripts:
+        parts = tid.rsplit('_', 1)
+        if len(parts) == 2 and parts[1].isdigit():
+            source_prefixes.add(parts[0] + '_')
+
+    source_seqs = []
+    for chrom_file in chrom_files:
+        for rec in SeqIO.parse(chrom_file, "fasta"):
+            if any(rec.id.startswith(prefix) for prefix in source_prefixes):
+                source_seqs.append(str(rec.seq))
+    return source_seqs
+
+
 def check_14mer_safety(probes_file, species, output_base, args, source_transcripts=None, input_fasta=None):
     """Check if k-mers from on-target probes have off-target genome matches using Jellyfish."""
     k = args.kmer_length
@@ -574,12 +594,19 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     query_elapsed = time.time() - query_start
     print(f"  Queried {len(genome_counts)} k-mers in {query_elapsed:.2f}s")
 
-    # Count k-mer occurrences in source sequences for self-match exclusion
+    # Count k-mer occurrences in source genome for self-match exclusion
+    # Use full source genome from database (all contigs), not just the input fragment
     source_counts = {}
-    if input_fasta and os.path.exists(input_fasta):
+    source_seqs = []
+    if source_transcripts and chrom_files:
+        source_seqs = find_source_genome_sequences(chrom_files, source_transcripts)
+
+    if not source_seqs and input_fasta and os.path.exists(input_fasta):
         source_seqs = [str(rec.seq) for rec in SeqIO.parse(input_fasta, "fasta")]
+
+    if source_seqs:
         source_counts = count_source_kmers(source_seqs, k)
-        print(f"  Counted {len(source_counts)} k-mers in source sequence for self-match exclusion")
+        print(f"  Counted {len(source_counts)} k-mers in source genome for self-match exclusion")
 
     # Filter probes: a probe is unsafe if any of its k-mers has off-target matches
     unsafe_probes = set()
@@ -592,7 +619,6 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
             genome_count = genome_counts.get(kmer, 0)
             source_count = source_counts.get(kmer, 0)
             off_target = genome_count - source_count
-
             if off_target > 0:
                 total_other_matches += 1
                 unsafe_probes.add(probe_id)
@@ -602,7 +628,7 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
             elif genome_count > 0:
                 total_self_matches += 1
 
-    print(f"K-mer filtering complete:")
+    print("K-mer filtering complete:")
     print(f"  Self-gene matches (excluded): {total_self_matches:,}")
     print(f"  Other-gene matches: {total_other_matches:,}")
     print(f"  Unsafe probes (off-target k-mer matches): {len(unsafe_probes)}")
@@ -1077,7 +1103,7 @@ def main():
 
     # Infer source transcripts from alignment patterns
     gene_mappings = annotator.mappings if annotator and annotator.mappings else None
-    source_info = infer_source_transcripts(filtered_sam, gene_mappings=gene_mappings)
+    source_info = infer_source_transcripts(filtered_sam, gene_mappings=gene_mappings, is_microbiome=is_microbiome)
     source_transcripts = source_info['source_transcripts']
     source_gene = source_info['source_gene']
 

@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import Dict, Optional, Set
 
 
-def infer_source_transcripts(sam_file, gene_mappings=None):
+def infer_source_transcripts(sam_file, gene_mappings=None, is_microbiome=False):
     """
     Infer source transcript(s) and gene name from probe alignment patterns.
 
@@ -76,17 +76,18 @@ def infer_source_transcripts(sam_file, gene_mappings=None):
         # No gene mappings — detect isoforms by probe overlap.
         # Isoforms of the same gene share most perfectly-mapping probes.
         source_transcripts.add(top_transcript)
-        probe_set = perfect_probes if perfect_probes else all_probes
-        top_probes = probe_set[top_transcript]
-        if top_probes:
-            for tid, probes in probe_set.items():
-                if tid == top_transcript:
-                    continue
-                overlap = len(probes & top_probes)
-                # If >50% of this transcript's probes also map to the top transcript,
-                # it's likely an isoform of the same gene
-                if overlap > 0 and overlap / len(probes) > 0.5:
-                    source_transcripts.add(tid)
+        if not is_microbiome:
+            probe_set = perfect_probes if perfect_probes else all_probes
+            top_probes = probe_set[top_transcript]
+            if top_probes:
+                for tid, probes in probe_set.items():
+                    if tid == top_transcript:
+                        continue
+                    overlap = len(probes & top_probes)
+                    # If >50% of this transcript's probes also map to the top transcript,
+                    # it's likely an isoform of the same gene
+                    if overlap > 0 and overlap / len(probes) > 0.5:
+                        source_transcripts.add(tid)
 
     if source_gene:
         print(f"Source gene: {source_gene} ({len(source_transcripts)} transcript(s))")

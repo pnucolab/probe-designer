@@ -649,26 +649,21 @@ def get_job_alignments(
             raise HTTPException(status_code=500, detail="Failed to parse alignment data") from e
     
     try:
-        if mismatch is not None:
-            all_alignments = parse_sam_file(str(sam_file), mismatch_filter=mismatch)
-            total_count = len(all_alignments)
-            total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
-            
-            if page > total_pages and total_pages > 0:
-                raise HTTPException(status_code=400, detail=f"Page {page} exceeds total pages {total_pages}")
-            
-            start_idx = (page - 1) * page_size
-            end_idx = start_idx + page_size
-            alignments = all_alignments[start_idx:end_idx]
-        else:
-            total_count = count_sam_alignments(str(sam_file))
-            total_pages = (total_count + page_size - 1) // page_size
-            
-            if page > total_pages and total_pages > 0:
-                raise HTTPException(status_code=400, detail=f"Page {page} exceeds total pages {total_pages}")
-            
-            offset = (page - 1) * page_size
-            alignments = parse_sam_file(str(sam_file), limit=page_size, offset=offset)
+        all_alignments = parse_sam_file(str(sam_file), mismatch_filter=mismatch)
+        # Sort by probe numeric ID to group all alignments for the same probe together
+        def probe_sort_key(a):
+            m = re.search(r'probe_(\d+)', a['probe_id'])
+            return int(m.group(1)) if m else 0
+        all_alignments.sort(key=probe_sort_key)
+        total_count = len(all_alignments)
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
+
+        if page > total_pages and total_pages > 0:
+            raise HTTPException(status_code=400, detail=f"Page {page} exceeds total pages {total_pages}")
+
+        start_idx = (page - 1) * page_size
+        end_idx = start_idx + page_size
+        alignments = all_alignments[start_idx:end_idx]
         
         return {
             "job_id": job_id,

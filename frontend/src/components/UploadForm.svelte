@@ -138,6 +138,46 @@ GCCGCCTTCTTCGGCATATC`;
       }
     }
 
+    if (inputType === 'probe') {
+      const lines = sequenceToSubmit.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+      const headersWithoutSeq = [];
+      const seqsWithoutHeader = [];
+      let lastWasHeader = false;
+      let lastHeader = '';
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.startsWith('>')) {
+          if (lastWasHeader) {
+            headersWithoutSeq.push(lastHeader);
+          }
+          lastHeader = line.split(/\s/)[0].substring(1) || `line ${i + 1}`;
+          lastWasHeader = true;
+        } else if (/^[ATCGNatcgn]+$/.test(line)) {
+          if (!lastWasHeader) {
+            seqsWithoutHeader.push(`line ${i + 1}`);
+          }
+          lastWasHeader = false;
+        }
+      }
+      if (lastWasHeader) {
+        headersWithoutSeq.push(lastHeader);
+      }
+
+      if (headersWithoutSeq.length > 0) {
+        error = `FASTA header without sequence: "${headersWithoutSeq[0]}". Every header must be followed by a nucleotide sequence.`;
+        return;
+      }
+      if (seqsWithoutHeader.length > 0) {
+        error = 'Sequence found without a FASTA header. Every sequence must be preceded by a header line (starting with ">").';
+        return;
+      }
+      if (lines.length === 0 || !lines.some(l => l.startsWith('>'))) {
+        error = 'Invalid FASTA format: no FASTA headers found. Each probe must have a header line (starting with ">") followed by its sequence.';
+        return;
+      }
+    }
+
     const form = new FormData();
 
     if (inputType === 'gene') {
@@ -154,7 +194,7 @@ GCCGCCTTCTTCGGCATATC`;
       form.append('probe_length', String(probe_length || 36));
     }
     form.append('kmer_length', String(kmerLength || 18));
-    form.append('max_mismatches', String(max_mismatches || 2));
+    form.append('max_mismatches', String(max_mismatches ?? 2));
     form.append('tm_range', tmRange || '42-47');
 
     console.log('Form data being sent:');
