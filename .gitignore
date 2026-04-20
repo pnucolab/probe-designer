@@ -66,4 +66,4 @@ results/
 *.fasta.fai
 *.gff3
 pipeline_log.txt
-EOF
+EOFsplit_chunks.py
