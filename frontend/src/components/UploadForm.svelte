@@ -84,9 +84,24 @@ GCCGCCTTCTTCGGCATATC`;
 
     console.log('Sequence to submit (first 100 chars):', sequenceToSubmit.substring(0, 100));
 
-    if (probe_length !== '' && probe_length <= 0) {
-      error = 'Probe length must be a positive number';
+    if (probe_length !== '' && (probe_length < 20 || probe_length > 50)) {
+      error = 'Probe length must be between 20 and 50 bp';
       return;
+    }
+    if (tmRange !== '') {
+      const parts = tmRange.split('-').map(s => parseFloat(s.trim()));
+      if (parts.some(isNaN) || parts.length < 1 || parts.length > 2) {
+        error = 'Enter a single Tm (e.g. 45) or a range (e.g. 42-47)';
+        return;
+      }
+      if (parts.some(v => v < 10 || v > 100)) {
+        error = 'Please enter a valid Tm value';
+        return;
+      }
+      if (parts.length === 2 && parts[0] > parts[1]) {
+        error = 'Tm minimum cannot be greater than maximum';
+        return;
+      }
     }
     if (!alignMicrobiome && !alignHost) {
       error = 'Please select at least one target (Host Transcriptome or Additional Microbiome)';
@@ -333,7 +348,7 @@ GCCGCCTTCTTCGGCATATC`;
        {#if inputType === 'gene'}
           <div>
             <label for="probe_length" class="label-text">Probe Length (bp)</label>
-            <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 36)" class="number-input" />        </div>
+            <input id="probe_length" type="number" bind:value={probe_length} placeholder="Range: 20-50 bp (default: 36)" min="20" max="50" class="number-input" />        </div>
         {/if}
         <div>
           <label for="kmer_length" class="label-text">K-mer Length (bp)</label>
@@ -345,7 +360,7 @@ GCCGCCTTCTTCGGCATATC`;
         </div>
         <div>
           <label for="tm_range" class="label-text">Tm Range (°C)</label>
-          <input id="tm_range" type="text" bind:value={tmRange} placeholder="Default: 42-47" class="number-input" />
+          <input id="tm_range" type="text" bind:value={tmRange} placeholder="e.g. 42-47 or 45 (default: 42-47)" class="number-input" />
         </div>
       </div>
     </div>

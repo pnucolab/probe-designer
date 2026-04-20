@@ -101,7 +101,8 @@ def infer_source_transcripts(sam_file, gene_mappings=None, is_microbiome=False):
 
 def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
                              source_transcripts: Optional[Set[str]] = None,
-                             source_gene: Optional[str] = None) -> Dict:
+                             source_gene: Optional[str] = None,
+                             is_probe_input: bool = False) -> Dict:
     """
     Classify probes as safe or risky based on SAM alignments.
 
@@ -176,8 +177,16 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
     for probe_id, data in probe_data.items():
         unique_gene_count = len(data['unique_genes'])
 
+        # Probe-input mode: source is unknown, so any alignment is off-target.
+        # Skip self-detection entirely to avoid the probe-ID substring fallback.
+        if is_probe_input:
+            if data['min_mm'] <= 1:
+                status = 'high_risk'
+            else:
+                status = 'medium_risk'
+
         # For microbiome: check if ANY alignment is to a different species
-        if is_microbiome and data['is_microbiome_species']:
+        elif is_microbiome and data['is_microbiome_species']:
             is_offtarget = _check_offtarget(
                 probe_id, data['targets'], data['target_transcripts'],
                 source_transcripts, source_gene

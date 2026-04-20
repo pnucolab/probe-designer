@@ -768,6 +768,9 @@ def main():
                     help="Tm filter range in °C, e.g. 42-47 (default: 42-47)")
 
     args = parser.parse_args()
+    if args.probe_length < 20 or args.probe_length > 50:
+        print(f"Error: Probe length must be between 20 and 50 bp, got {args.probe_length}.")
+        sys.exit(1)
     if args.kmer_length < 14:
         print(f"Error: K-mer length {args.kmer_length} is too small. Minimum k-mer length is 14.")
         sys.exit(1)
@@ -906,9 +909,10 @@ def main():
         print("\nSkipping probe generation - using provided probes")
 
         total, passing = count_and_filter_gc(input_fasta, min_gc=40, max_gc=80)
-        
+
         SeqIO.write(passing, probes_out, "fasta")
-        
+
+        print(f"Input probes: {total}")
         print(f"Found {len(passing)} candidate probes passing GC filter (40-80%, length={args.probe_length}).")
         
         if len(passing) == 0:
@@ -927,7 +931,13 @@ def main():
             return False
 
     # Tm and homopolymer filter: remove probes outside Tm range or with homopolymer runs
-    tm_min, tm_max = [float(x) for x in args.tm_range.split('-')]
+    tm_parts = args.tm_range.split('-')
+    if len(tm_parts) == 1:
+        tm_min = tm_max = float(tm_parts[0])
+    else:
+        tm_min, tm_max = float(tm_parts[0]), float(tm_parts[1])
+    tm_min = max(10.0, tm_min)
+    tm_max = min(100.0, tm_max)
     scorer = ThermodynamicProbeScorer()
     candidates = list(SeqIO.parse(probes_out, 'fasta'))
     passed = []
@@ -1101,15 +1111,23 @@ def main():
 
     sam_to_analyze = annotated_sam if os.path.exists(annotated_sam) else filtered_sam
 
-    # Infer source transcripts from alignment patterns
+    # Infer source transcripts from alignment patterns.
+    # Skip for pasted-probe input: the probe's true source is unknown, so any
+    # alignment must be treated as off-target rather than inferred as self.
     gene_mappings = annotator.mappings if annotator and annotator.mappings else None
-    source_info = infer_source_transcripts(filtered_sam, gene_mappings=gene_mappings, is_microbiome=is_microbiome)
-    source_transcripts = source_info['source_transcripts']
-    source_gene = source_info['source_gene']
+    if scenario == "probe_sequence":
+        print("\nSkipping source inference (probe input mode): all alignments treated as off-target")
+        source_transcripts = set()
+        source_gene = None
+    else:
+        source_info = infer_source_transcripts(filtered_sam, gene_mappings=gene_mappings, is_microbiome=is_microbiome)
+        source_transcripts = source_info['source_transcripts']
+        source_gene = source_info['source_gene']
 
     probe_classifications = classify_probes_from_sam(
         sam_to_analyze, is_microbiome=is_microbiome,
-        source_transcripts=source_transcripts, source_gene=source_gene
+        source_transcripts=source_transcripts, source_gene=source_gene,
+        is_probe_input=(scenario == "probe_sequence")
     )
     # Count self-aligning vs off-target probes
     self_aligning_probes = sum(1 for p_id, data in probe_classifications.items() if data['status'] == 'safe')

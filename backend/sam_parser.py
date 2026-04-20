@@ -95,6 +95,43 @@ def apply_mismatches_to_sequence(sequence: str, cigar: str, md: str, flag: int) 
     return ''.join(result)
 
 
+def reconstruct_reference_from_sam(sequence: str, cigar: str, md: str) -> str:
+    """
+    Reconstruct the reference (target) sequence for an alignment using SEQ + CIGAR + MD.
+    Mismatch bases (from MD) are lowercased to highlight divergence from the probe.
+    Deletions (bases absent in probe) are inserted from MD. Insertions (extra probe
+    bases) are dropped — they do not exist in the reference.
+    """
+    cigar_ops = parse_cigar(cigar)
+    md_mismatches = parse_md_tag(md)
+
+    md_subs = {pos: base for pos, typ, base in md_mismatches if typ == 'substitution'}
+    md_dels = {pos: base for pos, typ, base in md_mismatches if typ == 'deletion'}
+
+    result = []
+    seq_pos = 0
+    ref_pos = 0
+
+    for count, op in cigar_ops:
+        if op == 'M':
+            for _ in range(count):
+                if ref_pos in md_subs:
+                    result.append(md_subs[ref_pos].lower())
+                elif seq_pos < len(sequence):
+                    result.append(sequence[seq_pos].upper())
+                seq_pos += 1
+                ref_pos += 1
+        elif op == 'I':
+            seq_pos += count
+        elif op == 'D':
+            deleted = md_dels.get(ref_pos, '')
+            for base in deleted:
+                result.append(base.lower())
+            ref_pos += count
+
+    return ''.join(result)
+
+
 def count_sam_alignments(sam_path: str) -> int:
     """
     Count total number of valid alignments in SAM file (excluding headers).
@@ -191,10 +228,12 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                 strand = '-' if is_reverse else '+'
                 
                 formatted_seq = apply_mismatches_to_sequence(seq, cigar, md, flag)
-                
+                target_seq = reconstruct_reference_from_sam(seq, cigar, md)
+
                 alignments.append({
                     'probe_id': qname,
                     'sequence': formatted_seq,
+                    'target_sequence': target_seq,
                     'target_transcript': rname,
                     'gene_id': gene_id,
                     'mismatches': nm,

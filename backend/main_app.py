@@ -90,6 +90,7 @@ class AlignmentRecord(BaseModel):
     """Parsed alignment record from SAM file."""
     probe_id: str
     sequence: str
+    target_sequence: Optional[str] = None
     target_transcript: str
     gene_id: Optional[str] = None
     mismatches: int
@@ -290,6 +291,11 @@ async def create_job(
         raise HTTPException(
             status_code=400,
             detail="No input provided. Must provide one of: gene_sequence or probe_sequence"
+        )
+    if probe_length < 20 or probe_length > 50:
+        raise HTTPException(
+            status_code=400,
+            detail="Probe length must be between 20 and 50 bp"
         )
     
     if len(provided) > 1:
@@ -504,20 +510,43 @@ def parse_pipeline_stats(log_path):
         "total_alignments": None,
         "non_aligned_probes": None,
         "safe_probes": None,
-        "filtered_alignments": None
+        "filtered_alignments": None,
+        "input_probes": None,
+        "gc_passed": None,
+        "gc_rejected": None,
+        "tm_rejected": None,
+        "homopolymer_rejected": None
     }
-    
+
     try:
         with open(log_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
+        match = re.search(r'Input probes:\s*([\d,]+)', content)
+        if match:
+            stats["input_probes"] = int(match.group(1).replace(',', ''))
+
+        match = re.search(r'Found ([\d,]+) candidate probes passing GC filter', content)
+        if match:
+            stats["gc_passed"] = int(match.group(1).replace(',', ''))
+
+        if stats["input_probes"] is not None and stats["gc_passed"] is not None:
+            stats["gc_rejected"] = stats["input_probes"] - stats["gc_passed"]
+
+        match = re.search(r'Tm filter.*rejected ([\d,]+)/', content)
+        if match:
+            stats["tm_rejected"] = int(match.group(1).replace(',', ''))
+
+        match = re.search(r'Homopolymer filter.*rejected ([\d,]+)/', content)
+        if match:
+            stats["homopolymer_rejected"] = int(match.group(1).replace(',', ''))
+
         match = re.search(r'Passed both filters: ([\d,]+)/', content)
         if match:
             stats["candidate_probes"] = int(match.group(1).replace(',', ''))
         else:
-            match = re.search(r'Found ([\d,]+) candidate probes passing GC filter', content)
-            if match:
-                stats["candidate_probes"] = int(match.group(1).replace(',', ''))
+            if stats["gc_passed"] is not None:
+                stats["candidate_probes"] = stats["gc_passed"]
         
         match = re.search(r'Total alignments scanned:\s*([\d,]+)', content)
         if match:
@@ -592,7 +621,7 @@ def list_job_files(job_id: str):
 def get_job_alignments(
     job_id: str, 
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
-    page_size: int = Query(25, ge=1, le=100, description="Items per page"),
+    page_size: int = Query(25, ge=1, le=1000000, description="Items per page"),
     mismatch: Optional[int] = Query(None, ge=0, description="Filter by specific mismatch count"),
     probe_id: Optional[str] = Query(None, description="Get all alignments for specific probe")  # ADD THIS LINE
 ):

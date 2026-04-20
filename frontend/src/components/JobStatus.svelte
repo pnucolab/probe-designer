@@ -10,12 +10,14 @@
   let submittedAt = null;
   let files = [];
   let alignments = [];
+  let allAlignments = [];
+  let loadingAlignments = true;
   let totalAlignments = 0;
   let currentPage = 1;
   let pageSize = 25;
   let totalPages = 0;
   let error = null;
-  let mismatchFilter = null; 
+  let mismatchFilter = null;
   let groupedAlignments = [];
   let sequenceLength = 0;
   let referenceId = 'reference';
@@ -46,6 +48,14 @@
   $: alignmentsNextDisabled = currentPage >= totalPages;
   $: safeProbesPageNumbers = getSafeProbesPageNumbers(safeProbesPage, safeProbesTotalPages);
   $: pageNumbers = getPageNumbers(currentPage, totalPages);
+
+  $: filteredAlignments = mismatchFilter === null
+    ? allAlignments
+    : allAlignments.filter(a => a.mismatches === mismatchFilter);
+  $: totalAlignments = filteredAlignments.length;
+  $: totalPages = Math.ceil(totalAlignments / pageSize) || 0;
+  $: alignments = filteredAlignments.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  $: groupedAlignments = groupAlignmentsByProbe(alignments);
 
   function formatBytes(bytes) {
     if (!bytes && bytes !== 0) return '-';
@@ -92,7 +102,8 @@
         position: aln.position,
         strand: aln.strand,
         species: aln.species,
-        sequence: aln.sequence
+        sequence: aln.sequence,
+        target_sequence: aln.target_sequence
       });
     }
     
@@ -456,27 +467,26 @@
     });
   }
 
-  async function fetchAlignments(page = 1) {
+  async function fetchAlignments() {
+    loadingAlignments = true;
     try {
-      let url = `/jobs/${jobId}/alignments?page=${page}&page_size=${pageSize}`;
-      if (mismatchFilter !== null) url += `&mismatch=${mismatchFilter}`;
+      const url = `/jobs/${jobId}/alignments?page=1&page_size=1000000`;
       const alignmentsRes = await fetch(url);
       if (alignmentsRes.ok) {
         const alignData = await alignmentsRes.json();
-        alignments = alignData.alignments || [];
-        groupedAlignments = groupAlignmentsByProbe(alignments);
-        totalAlignments = alignData.total_alignments || 0;
-        currentPage = alignData.page || 1;
-        totalPages = alignData.total_pages || 0;
+        allAlignments = alignData.alignments || [];
+        currentPage = 1;
       }
     } catch (e) {
       console.error('Failed to fetch alignments:', e);
+    } finally {
+      loadingAlignments = false;
     }
   }
 
   function onMismatchFilterChange(value) {
     mismatchFilter = value === 'all' ? null : parseInt(value);
-    fetchAlignments(1);
+    currentPage = 1;
   }
 
   async function fetchStatus() {
@@ -509,7 +519,7 @@
         const filesRes = await fetch(`/jobs/${jobId}/files`);
         if (filesRes.ok) files = await filesRes.json().then(r => r.files || []);
         
-        await fetchAlignments(1);
+        await fetchAlignments();
         
         try {
           const faiRes = await fetch(`/jobs/${jobId}/download/reference.fasta.fai`);
@@ -537,19 +547,19 @@
 
   function goToPage(page) {
     if (page >= 1 && page <= totalPages) {
-      fetchAlignments(page);
+      currentPage = page;
     }
   }
 
   function nextPage() {
     if (currentPage < totalPages) {
-      goToPage(currentPage + 1);
+      currentPage += 1;
     }
   }
 
   function prevPage() {
     if (currentPage > 1) {
-      goToPage(currentPage - 1);
+      currentPage -= 1;
     }
   }
 
@@ -625,8 +635,43 @@
     fetchSafeProbes();
   }
 
+  function downloadAlignments() {
+    if (filteredAlignments.length === 0) return;
+    const headers = [
+      'Probe ID', 'Probe Sequence', 'GC%', 'Target Sequence',
+      'Target Transcript', 'Gene ID', 'Species',
+      'Mismatches', 'Position', 'Strand'
+    ];
+    const rows = filteredAlignments.map(a => {
+      const probeSeq = (a.sequence || '').toUpperCase().replace(/-/g, '');
+      const gc = calculateGC(probeSeq);
+      return [
+        a.probe_id ?? '',
+        probeSeq,
+        gc,
+        a.target_sequence ?? '',
+        a.target_transcript ?? '',
+        a.gene_id ?? '',
+        a.species ?? '',
+        a.mismatches ?? '',
+        a.position ?? '',
+        a.strand ?? ''
+      ].join('\t');
+    });
+    const tsv = [headers.join('\t'), ...rows].join('\n');
+    const blob = new Blob([tsv], { type: 'text/tab-separated-values' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const suffix = mismatchFilter === null ? 'all' : `mm${mismatchFilter}`;
+    a.download = `probe_alignments_${suffix}_${filteredAlignments.length}.tsv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   function downloadFilteredProbes() {
     if (filteredSafeProbes.length === 0) return;
+    const isFiltered = tmFilter.trim() !== '' || gcFilter.trim() !== '';
     const headers = ['Probe ID', 'Sequence', 'Tm', 'GC%', 'Complexity', 'Sec. Struct'];
     const rows = filteredSafeProbes.map(p => [
       p.probe_id, p.sequence, p.tm.toFixed(1),
@@ -637,7 +682,7 @@
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `filtered_probes_${filteredSafeProbes.length}.tsv`;
+    a.download = `${isFiltered ? 'filtered' : 'safe'}_probes_${filteredSafeProbes.length}.tsv`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -699,6 +744,18 @@
     "
   >
     <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Result Summary</h3>
+    {#if inputType === 'probe_sequence' && info.stats.input_probes !== null && info.stats.input_probes !== undefined}
+      {@const rejections = [
+        { label: 'GC', value: info.stats.gc_rejected ?? 0 },
+        { label: 'Tm', value: info.stats.tm_rejected ?? 0 },
+        { label: 'homopolymer', value: info.stats.homopolymer_rejected ?? 0 },
+      ].filter(r => r.value > 0)}
+      {#if rejections.length > 0}
+        <p style="margin:0 0 12px 0; font-size:14px; color:#374151;">
+          From <strong>{formatNumber(info.stats.input_probes)}</strong> input probes, {#each rejections as r, idx}<strong>{formatNumber(r.value)}</strong> {idx === 0 ? 'rejected ' : ''}by {r.label}{idx < rejections.length - 1 ? ', ' : ''}{/each}.
+        </p>
+      {/if}
+    {/if}
     {#if info.stats.candidate_probes === 0}
       <div style="
         padding:16px;
@@ -714,9 +771,22 @@
           </svg>
           <div>
             <div style="font-weight:600; color:#991b1b; font-size:15px; margin-bottom:4px;">
-              None of the probes passed the GC content filter (40-60%). 
-              This may occur if the input sequence has extreme GC content. 
-              Consider adjusting the probe length or target a different region of the sequence.
+              {#if info.stats.gc_passed === 0}
+                None of the probes passed the GC content filter (40-80%).
+                This may occur if the input sequence has extreme GC content.
+                Consider adjusting the probe length or target a different region of the sequence.
+              {:else if info.stats.tm_rejected > 0 && info.stats.tm_rejected === info.stats.gc_passed}
+                None of the probes passed the Tm filter.
+                All {info.stats.gc_passed} probes that passed the GC filter were rejected by the Tm range.
+                Consider widening the Tm range or adjusting the probe length.
+              {:else if info.stats.homopolymer_rejected > 0 && info.stats.homopolymer_rejected === info.stats.gc_passed}
+                None of the probes passed the homopolymer filter.
+                All {info.stats.gc_passed} probes that passed the GC filter contain homopolymer runs.
+                Consider adjusting the probe length or target a different region of the sequence.
+              {:else}
+                No probes passed the filtering criteria.
+                Consider adjusting the probe length, Tm range, or target a different region of the sequence.
+              {/if}
             </div>
           </div>
         </div>
@@ -851,14 +921,16 @@
                   Showing {((safeProbesPage - 1) * safeProbesPageSize) + 1}-{Math.min(safeProbesPage * safeProbesPageSize, filteredSafeProbes.length)} of {filteredSafeProbes.length} probes
                 </div>
                 <div style="display:flex; align-items:center; gap:12px;">
-                  {#if tmFilter.trim() || gcFilter.trim()}
-                    <button
-                      on:click={downloadFilteredProbes}
-                      style="padding:4px 10px; background:#0ea5e9; color:white; border:none; border-radius:4px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:4px;"
-                    >
-                      ⬇ Download Filtered ({filteredSafeProbes.length})
-                    </button>
-                  {/if}
+                  <button
+                    on:click={downloadFilteredProbes}
+                    disabled={filteredSafeProbes.length === 0}
+                    class="download-link"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                    </svg>
+                    <span>{tmFilter.trim() || gcFilter.trim() ? 'Download Filtered' : 'Download All'} ({filteredSafeProbes.length})</span>
+                  </button>
                   <label for="page-size" style="font-size:13px; color:#374151;">Rows per page:</label>
                   <select
                     id="page-size"
@@ -1183,7 +1255,7 @@
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
       
-      {#if totalAlignments > 0}
+      {#if allAlignments.length > 0}
         <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
           <label for="mismatch-filter" style="font-size:14px; color:#374151;">Filter by mismatches:</label>
           <select
@@ -1200,6 +1272,16 @@
           <span style="margin-left:auto; font-size:14px; color:#6b7280;">
             {totalAlignments.toLocaleString()} total alignments
           </span>
+          <button
+            on:click={downloadAlignments}
+            disabled={filteredAlignments.length === 0}
+            class="download-link"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+            </svg>
+            <span>{mismatchFilter === null ? 'Download All' : 'Download Filtered'} ({filteredAlignments.length})</span>
+          </button>
         </div>
       {/if}
 
@@ -1236,7 +1318,7 @@
                     {/if}
                     <td style="padding:10px; vertical-align:top;">
                       <div style="font-family:monospace; font-size:11px; line-height:1.5; word-break:break-all;">
-                        {#each formatSequenceWithHighlights(aln.sequence) as {char, isLowercase, isDash}}
+                        {#each formatSequenceWithHighlights(aln.target_sequence || aln.sequence) as {char, isLowercase, isDash}}
                           <span class:lowercase={isLowercase} class:dash={isDash}>{char}</span>
                         {/each}
                       </div>
@@ -1320,9 +1402,18 @@
             Next
           </button>
         </div>
+      {:else if loadingAlignments}
+        <div style="padding:40px; display:flex; justify-content:center; align-items:center; gap:10px; color:#6b7280; background:#f9fafb; border-radius:6px;">
+          <div class="spinner"></div>
+          <span>Loading alignments...</span>
+        </div>
+      {:else if allAlignments.length === 0}
+        <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
+          No off-target alignment.
+        </div>
       {:else}
         <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
-          No alignments found for the selected filter
+          No alignments found for the selected filter.
         </div>
       {/if}
     </div>
@@ -1364,14 +1455,17 @@
     align-items: center;
     gap: 6px;
     color: white;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
     font-weight: 600;
+    line-height: 1.2;
     text-decoration: none;
     margin-top: 8px;
     padding: 8px 16px;
     border-radius: 8px;
     background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     border: none;
+    cursor: pointer;
     transition: all 0.2s ease;
     box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
   }
@@ -1379,5 +1473,15 @@
   .download-link:focus {
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+  }
+  .download-link:disabled {
+    background: #9ca3af;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+  .download-link:disabled:hover,
+  .download-link:disabled:focus {
+    transform: none;
+    box-shadow: none;
   }
 </style>
