@@ -10,14 +10,12 @@
   let submittedAt = null;
   let files = [];
   let alignments = [];
-  let allAlignments = [];
   let loadingAlignments = true;
   let totalAlignments = 0;
-  let currentPage = 1;
-  let pageSize = 25;
-  let totalPages = 0;
+  const ALIGNMENT_PREVIEW_SIZE = 100;
+  const ALIGNMENTS_PAGE_SIZE = 10;
+  let alignmentsPage = 1;
   let error = null;
-  let mismatchFilter = null;
   let groupedAlignments = [];
   let sequenceLength = 0;
   let referenceId = 'reference';
@@ -37,6 +35,173 @@
   let safeProbesPageSize = 10;
   let safeProbesPageSizeOptions = [10, 25, 50, 100];
 
+  let kmerReportOpening = false;
+
+  let probeRiskSummary = null;
+  let probeRiskSummaryLoading = false;
+
+  async function loadProbeRiskSummary() {
+    if (probeRiskSummary || probeRiskSummaryLoading) return;
+    probeRiskSummaryLoading = true;
+    try {
+      const res = await fetch(`/jobs/${jobId}/download/probes.gff3`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const counts = {
+        safe: 0,
+        high_risk: 0,
+        medium_risk_kmer: 0,
+        medium_risk_mismatch: 0,
+        no_alignment: 0,
+        total: 0,
+      };
+      for (const line of text.split('\n')) {
+        if (!line || line.startsWith('#')) continue;
+        const cols = line.split('\t');
+        if (cols.length < 9) continue;
+        const attrs = {};
+        for (const kv of cols[8].split(';')) {
+          const i = kv.indexOf('=');
+          if (i > 0) attrs[kv.slice(0, i)] = kv.slice(i + 1);
+        }
+        const risk = attrs.risk_level;
+        const desc = (attrs.description || '').toLowerCase();
+        counts.total++;
+        if (risk === 'safe') counts.safe++;
+        else if (risk === 'high_risk') counts.high_risk++;
+        else if (risk === 'no_alignment') counts.no_alignment++;
+        else if (risk === 'medium_risk') {
+          if (desc.includes('k-mer')) counts.medium_risk_kmer++;
+          else counts.medium_risk_mismatch++;
+        }
+      }
+      probeRiskSummary = counts;
+    } catch (err) {
+      console.warn('Failed to load probe risk summary:', err);
+    } finally {
+      probeRiskSummaryLoading = false;
+    }
+  }
+
+  $: if (status === 'SUCCESS' && info?.stats?.candidate_probes > 0 && !probeRiskSummary && !probeRiskSummaryLoading) {
+    loadProbeRiskSummary();
+  }
+
+  async function openKmerReportInTab() {
+    if (kmerReportOpening) return;
+    kmerReportOpening = true;
+    try {
+      const res = await fetch(`/jobs/${jobId}/download/kmer_matches_report.txt`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = new Blob([await res.text()], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Revoke after the new tab has had a chance to load it.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      alert(`Failed to open report: ${err.message || err}`);
+    } finally {
+      kmerReportOpening = false;
+    }
+  }
+
+  const OFFTARGET_PALETTE = [
+    '#3b82f6', '#ef4444', '#10b981', '#f59e0b',
+    '#8b5cf6', '#ec4899', '#14b8a6', '#f97316',
+    '#6366f1', '#84cc16', '#06b6d4', '#a855f7'
+  ];
+  function offtargetColorFor(i) {
+    if (i < OFFTARGET_PALETTE.length) return OFFTARGET_PALETTE[i];
+    // Beyond the fixed palette, generate distinct hues via the golden angle.
+    const hue = ((i - OFFTARGET_PALETTE.length) * 137.508) % 360;
+    return `hsl(${hue.toFixed(1)}, 60%, 55%)`;
+  }
+
+  const OFFTARGET_TOP_N_MAX = 100;
+  let offTargetTopN = 50;
+  let offTargetCustomInput = 50;
+  let offTargetSummary = { groups: [], totalGroups: 0, totalAlignments: 0, hiddenGroups: 0, excludedUnknown: 0, groupBy: null };
+  let loadingOffTargetSummary = false;
+
+  async function fetchOffTargetSummary() {
+    loadingOffTargetSummary = true;
+    try {
+      const res = await fetch(`/jobs/${jobId}/offtarget-summary?top_n=${offTargetTopN}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const groups = (data.groups || []).map((g, i) => ({
+        label: g.label,
+        count: g.count,
+        color: offtargetColorFor(i)
+      }));
+      const totalAlignments = data.total_alignments || 0;
+      const hiddenGroups = data.hidden_groups || 0;
+      const topSum = groups.reduce((s, g) => s + g.count, 0);
+      const othersCount = Math.max(0, totalAlignments - topSum);
+      if (hiddenGroups > 0 && othersCount > 0) {
+        groups.push({
+          label: `Others (${hiddenGroups.toLocaleString()})`,
+          count: othersCount,
+          color: '#9ca3af'
+        });
+      }
+      offTargetSummary = {
+        groups,
+        totalGroups: data.total_groups || 0,
+        totalAlignments,
+        hiddenGroups,
+        excludedUnknown: data.excluded_unknown || 0,
+        groupBy: data.group_by || null
+      };
+    } catch (e) {
+      console.error('Failed to fetch off-target summary:', e);
+    } finally {
+      loadingOffTargetSummary = false;
+    }
+  }
+
+  function applyOffTargetCustom() {
+    let v = parseInt(offTargetCustomInput, 10);
+    if (!Number.isFinite(v) || v <= 0) return;
+    if (v > OFFTARGET_TOP_N_MAX) v = OFFTARGET_TOP_N_MAX;
+    offTargetCustomInput = v;
+    if (v === offTargetTopN) return;
+    offTargetTopN = v;
+    fetchOffTargetSummary();
+  }
+
+  function onOffTargetCustomKey(event) {
+    if (event.key === 'Enter') applyOffTargetCustom();
+  }
+
+  function buildPieSlices(groups, radius, totalForPercent) {
+    const sliceTotal = groups.reduce((s, g) => s + g.count, 0);
+    if (sliceTotal === 0) return [];
+    const denom = totalForPercent && totalForPercent > 0 ? totalForPercent : sliceTotal;
+    if (groups.length === 1) {
+      return [{ ...groups[0], path: null, isFullCircle: true, percent: (groups[0].count / denom) * 100 }];
+    }
+    let cumulative = 0;
+    return groups.map((g) => {
+      const startAngle = (cumulative / sliceTotal) * 2 * Math.PI;
+      cumulative += g.count;
+      const endAngle = (cumulative / sliceTotal) * 2 * Math.PI;
+      const x1 = radius * Math.sin(startAngle);
+      const y1 = -radius * Math.cos(startAngle);
+      const x2 = radius * Math.sin(endAngle);
+      const y2 = -radius * Math.cos(endAngle);
+      const largeArc = endAngle - startAngle > Math.PI ? 1 : 0;
+      const path = `M 0 0 L ${x1.toFixed(3)} ${y1.toFixed(3)} A ${radius} ${radius} 0 ${largeArc} 1 ${x2.toFixed(3)} ${y2.toFixed(3)} Z`;
+      return { ...g, path, isFullCircle: false, percent: (g.count / denom) * 100 };
+    });
+  }
+
+  $: offTargetSlices = buildPieSlices(offTargetSummary.groups, 100, offTargetSummary.totalAlignments);
+  $: offTargetGroupBy = offTargetSummary.groupBy
+    || ((info?.species === 'human' || info?.species === 'mouse') ? 'gene' : 'species');
+  $: offTargetNoun = offTargetGroupBy === 'species' ? 'species' : offTargetGroupBy;
+  $: offTargetNounPlural = offTargetGroupBy === 'species' ? 'species' : offTargetGroupBy + 's';
+
   $: paginatedProbes = filteredSafeProbes.slice(
     (safeProbesPage - 1) * safeProbesPageSize,
     safeProbesPage * safeProbesPageSize
@@ -44,18 +209,9 @@
   $: safeProbesTotalPages = Math.ceil(filteredSafeProbes.length / safeProbesPageSize) || 1;
   $: isPrevDisabled = safeProbesPage <= 1;
   $: isNextDisabled = safeProbesPage >= safeProbesTotalPages;
-  $: alignmentsPrevDisabled = currentPage <= 1;
-  $: alignmentsNextDisabled = currentPage >= totalPages;
   $: safeProbesPageNumbers = getSafeProbesPageNumbers(safeProbesPage, safeProbesTotalPages);
-  $: pageNumbers = getPageNumbers(currentPage, totalPages);
 
-  $: filteredAlignments = mismatchFilter === null
-    ? allAlignments
-    : allAlignments.filter(a => a.mismatches === mismatchFilter);
-  $: totalAlignments = filteredAlignments.length;
-  $: totalPages = Math.ceil(totalAlignments / pageSize) || 0;
-  $: alignments = filteredAlignments.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-  $: groupedAlignments = groupAlignmentsByProbe(alignments);
+  $: groupedAlignments = groupAlignmentsByProbe(displayedAlignments);
 
   function formatBytes(bytes) {
     if (!bytes && bytes !== 0) return '-';
@@ -71,6 +227,13 @@
     return num.toLocaleString();
   }
   
+  function alignmentLabel(aln) {
+    const isHumanMouse = info?.species === 'human' || info?.species === 'mouse';
+    const v = isHumanMouse ? aln.gene_id : aln.species;
+    if (v && v !== 'Unknown') return v;
+    return aln.target_transcript || '-';
+  }
+
   function calculateGC(sequence) {
     if (!sequence) return '-';
     const cleanSeq = sequence.replace(/-/g, '').toUpperCase();
@@ -470,12 +633,13 @@
   async function fetchAlignments() {
     loadingAlignments = true;
     try {
-      const url = `/jobs/${jobId}/alignments?page=1&page_size=1000000`;
+      const url = `/jobs/${jobId}/alignments?page=1&page_size=${ALIGNMENT_PREVIEW_SIZE}`;
       const alignmentsRes = await fetch(url);
       if (alignmentsRes.ok) {
         const alignData = await alignmentsRes.json();
-        allAlignments = alignData.alignments || [];
-        currentPage = 1;
+        alignments = alignData.alignments || [];
+        totalAlignments = alignData.total_alignments || 0;
+        alignmentsPage = 1;
       }
     } catch (e) {
       console.error('Failed to fetch alignments:', e);
@@ -484,9 +648,15 @@
     }
   }
 
-  function onMismatchFilterChange(value) {
-    mismatchFilter = value === 'all' ? null : parseInt(value);
-    currentPage = 1;
+  $: alignmentsTotalPages = Math.max(1, Math.ceil(alignments.length / ALIGNMENTS_PAGE_SIZE));
+  $: displayedAlignments = alignments.slice(
+    (alignmentsPage - 1) * ALIGNMENTS_PAGE_SIZE,
+    alignmentsPage * ALIGNMENTS_PAGE_SIZE
+  );
+
+  function goToAlignmentsPage(p) {
+    if (p < 1 || p > alignmentsTotalPages) return;
+    alignmentsPage = p;
   }
 
   async function fetchStatus() {
@@ -518,7 +688,10 @@
       if (status === 'SUCCESS' || status === 'FAILURE') {
         const filesRes = await fetch(`/jobs/${jobId}/files`);
         if (filesRes.ok) files = await filesRes.json().then(r => r.files || []);
-        
+
+        if (status === 'SUCCESS' && inputType === 'probe_sequence') {
+          fetchOffTargetSummary();
+        }
         await fetchAlignments();
         
         try {
@@ -545,62 +718,6 @@
     }
   }
 
-  function goToPage(page) {
-    if (page >= 1 && page <= totalPages) {
-      currentPage = page;
-    }
-  }
-
-  function nextPage() {
-    if (currentPage < totalPages) {
-      currentPage += 1;
-    }
-  }
-
-  function prevPage() {
-    if (currentPage > 1) {
-      currentPage -= 1;
-    }
-  }
-
-  function getPageNumbers(currentPage, totalPages) {
-    const pages = [];
-    const maxVisible = 5;
-    
-    if (totalPages <= maxVisible) {
-      for (let i = 1; i <= totalPages; i++) {
-        pages.push(i);
-      }
-      return pages;
-    } 
-    
-    pages.push(1);
-    
-    if (currentPage <= 3) {
-      for (let i = 2; i <= 4; i++) {
-        pages.push(i);
-      }
-      pages.push('...');
-      pages.push(totalPages);
-      
-    } else if (currentPage >= totalPages - 2) {
-      pages.push('...');
-      for (let i = totalPages - 3; i <= totalPages; i++) {
-        pages.push(i);
-      }
-      
-    } else {
-      pages.push('...');
-      pages.push(currentPage - 1);
-      pages.push(currentPage);
-      pages.push(currentPage + 1);
-      pages.push('...');
-      pages.push(totalPages);
-    }
-    
-    return pages;
-  }
-  
   function getStatusLabel(probe) {
     if (probe.status === 'safe') {
       return 'No off-target alignments';
@@ -611,15 +728,18 @@
         return 'Medium Risk (Failed k-mer safety analysis)';
       }
       return `Medium Risk (off-target matches with 1-2 mismatches)`;
+    } else if (probe.status === 'no_alignment') {
+      return 'No alignment to source gene';
     } else {
       return 'Unknown';
     }
   }
-  
+
   function getStatusColor(status) {
     if (status === 'safe') return '#10b981';
     if (status === 'high_risk') return '#dc2626';
     if (status === 'medium_risk') return '#ea580c';
+    if (status === 'no_alignment') return '#6b7280';
     return '#6b7280';
   }
 
@@ -633,40 +753,6 @@
   });
   $: if (status === 'SUCCESS' && info?.stats?.non_aligned_probes > 0 && safeProbes.length === 0 && !safeProbesFetched) {
     fetchSafeProbes();
-  }
-
-  function downloadAlignments() {
-    if (filteredAlignments.length === 0) return;
-    const headers = [
-      'Probe ID', 'Probe Sequence', 'GC%', 'Target Sequence',
-      'Target Transcript', 'Gene ID', 'Species',
-      'Mismatches', 'Position', 'Strand'
-    ];
-    const rows = filteredAlignments.map(a => {
-      const probeSeq = (a.sequence || '').toUpperCase().replace(/-/g, '');
-      const gc = calculateGC(probeSeq);
-      return [
-        a.probe_id ?? '',
-        probeSeq,
-        gc,
-        a.target_sequence ?? '',
-        a.target_transcript ?? '',
-        a.gene_id ?? '',
-        a.species ?? '',
-        a.mismatches ?? '',
-        a.position ?? '',
-        a.strand ?? ''
-      ].join('\t');
-    });
-    const tsv = [headers.join('\t'), ...rows].join('\n');
-    const blob = new Blob([tsv], { type: 'text/tab-separated-values' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const suffix = mismatchFilter === null ? 'all' : `mm${mismatchFilter}`;
-    a.download = `probe_alignments_${suffix}_${filteredAlignments.length}.tsv`;
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   function downloadFilteredProbes() {
@@ -796,7 +882,6 @@
       style="
         width:100%;
         border-collapse:collapse;
-        font-family:'Times New Roman', serif;
         font-size:14px;
         color:#111;
         border:1px solid #d1d5db;
@@ -866,6 +951,18 @@
                 </svg>
                 <span>Download K-mer Analysis Report</span>
                 </a>
+                <button
+                  type="button"
+                  class="download-link"
+                  style="border:none; cursor:pointer;"
+                  disabled={kmerReportOpening}
+                  on:click={openKmerReportInTab}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7zM19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7z"/>
+                  </svg>
+                  <span>{kmerReportOpening ? 'Opening…' : 'View K-mer Analysis Report'}</span>
+                </button>
               {/if}
             {/each}
             {/if}
@@ -1060,6 +1157,37 @@
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
 
+      {#if probeRiskSummary}
+        <div style="margin-bottom:12px;">
+          <div style="margin:0 0 6px 0; font-size:13px; font-weight:500; color:#374151;">
+            Probe Risk Summary
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:8px; font-size:13px;">
+            <span title="No off-target alignments and clean k-mer profile" style="padding:4px 10px; border-radius:12px; background:#d1fae5; color:#065f46; font-weight:600;">
+              Safe: {probeRiskSummary.safe.toLocaleString()}
+            </span>
+            <span title="At least one k-mer matches off-target sequence" style="padding:4px 10px; border-radius:12px; background:#fed7aa; color:#9a3412; font-weight:600;">
+              Medium risk — failed k-mer: {probeRiskSummary.medium_risk_kmer.toLocaleString()}
+            </span>
+            <span title="Off-target alignment with 1–2 mismatches" style="padding:4px 10px; border-radius:12px; background:#fed7aa; color:#9a3412; font-weight:600;">
+              Medium risk — 1–2 mismatches: {probeRiskSummary.medium_risk_mismatch.toLocaleString()}
+            </span>
+            <span title="Exact off-target alignment to another gene" style="padding:4px 10px; border-radius:12px; background:#fecaca; color:#991b1b; font-weight:600;">
+              High risk: {probeRiskSummary.high_risk.toLocaleString()}
+            </span>
+            <span title="Probe does not align to the source gene at all" style="padding:4px 10px; border-radius:12px; background:#e5e7eb; color:#374151; font-weight:600;">
+              No alignment: {probeRiskSummary.no_alignment.toLocaleString()}
+            </span>
+            <span title="All probes shown in the browser" style="padding:4px 10px; border-radius:12px; background:#e5e7eb; color:#111827; font-weight:600;">
+              Total: {probeRiskSummary.total.toLocaleString()}
+            </span>
+          </div>
+          <p style="margin:6px 0 0 0; font-size:12px; color:#6b7280; line-height:1.5;">
+            Probes are grouped by off-target risk. <strong>Safe</strong> = no off-target hits. <strong>Medium risk</strong> = either a failing k-mer match or an off-target alignment with 1–2 mismatches. <strong>High risk</strong> = exact off-target match to another gene. <strong>No alignment</strong> = probe doesn't bind the source gene at all.
+          </p>
+        </div>
+      {/if}
+
       <JBrowseViewer
         {jobId}
         {referenceId}
@@ -1181,6 +1309,11 @@
                 <p style="margin:0; font-weight:600;">Failed k-mer safety analysis</p>
                 <p style="margin:8px 0 0 0; font-size:13px;">No full-length off-target matches, but contains short k-mer segments shared with other genes.</p>
               </div>
+            {:else if expandedProbe.status === 'no_alignment'}
+              <div style="padding:20px; background:#f3f4f6; border:1px solid #9ca3af; border-radius:6px; text-align:center; color:#374151;">
+                <p style="margin:0; font-weight:600;">No alignment to source gene</p>
+                <p style="margin:8px 0 0 0; font-size:13px;">This probe doesn't bind the target — not usable for hybridization.</p>
+              </div>
             {:else}
               <div style="padding:20px; background:#ecfdf5; border:1px solid #10b981; border-radius:6px; text-align:center; color:#065f46;">
                 <p style="margin:0; font-weight:600;">No off-target alignments</p>
@@ -1212,11 +1345,11 @@
                       <td style="padding:8px; font-family:monospace; color:#1f2937;">{aln.target_transcript}</td>
                       {#if info?.species === 'human' || info?.species === 'mouse'}
                         <td style="padding:8px; color:#1f2937; font-weight:600;">
-                          {aln.gene_id || '-'}
+                          {alignmentLabel(aln)}
                         </td>
                       {:else}
                         <td style="padding:8px; font-family:monospace; color:#374151; font-size:12px;">
-                          {aln.species || '-'}
+                          {alignmentLabel(aln)}
                         </td>
                       {/if}
                       <td style="padding:8px; text-align:center;">
@@ -1252,36 +1385,90 @@
     </div>
   {/if}
   {#if status === 'SUCCESS' && inputType === 'probe_sequence' && info.stats.candidate_probes > 0}
+    {#if offTargetSummary.groups.length > 0}
+      <div style="margin-top:1.5rem;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:4px;">
+          <h3 style="margin:0; font-weight:600; font-size:16px;">
+            Off-target distribution
+          </h3>
+          <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:#374151; flex-wrap:wrap;">
+            <label for="offtarget-top-n">Show top:</label>
+            <input
+              id="offtarget-top-n"
+              type="number"
+              min="1"
+              max={OFFTARGET_TOP_N_MAX}
+              bind:value={offTargetCustomInput}
+              on:keydown={onOffTargetCustomKey}
+              disabled={loadingOffTargetSummary}
+              style="width:72px; padding:4px 6px; border:1px solid #d1d5db; border-radius:4px; font-size:13px;"
+            />
+            <button
+              on:click={applyOffTargetCustom}
+              disabled={loadingOffTargetSummary || !Number.isFinite(parseInt(offTargetCustomInput, 10)) || parseInt(offTargetCustomInput, 10) <= 0 || parseInt(offTargetCustomInput, 10) === offTargetTopN}
+              style="padding:4px 10px; border:1px solid #d1d5db; border-radius:4px; font-size:13px; background:white; cursor:pointer;"
+            >
+              Apply
+            </button>
+            {#if loadingOffTargetSummary}
+              <span style="color:#6b7280;">loading…</span>
+            {/if}
+          </div>
+        </div>
+        <p style="margin:0 0 12px 0; font-size:13px; color:#6b7280;">
+          {#if offTargetSummary.hiddenGroups > 0}
+            {@const topShown = offTargetSummary.groups.length - 1}
+            The pie shows the top {topShown} by alignment count; the remaining {offTargetSummary.hiddenGroups.toLocaleString()} {offTargetSummary.hiddenGroups === 1 ? offTargetNoun : offTargetNounPlural} are grouped as "Others".
+          {/if}
+        </p>
+        <div style="display:flex; gap:24px; align-items:center; flex-wrap:wrap; padding:16px; background:#f9fafb; border:1px solid #e5e7eb; border-radius:6px;">
+          <svg viewBox="-110 -110 220 220" width="220" height="220" style="flex-shrink:0;">
+            {#each offTargetSlices as slice}
+              {#if slice.isFullCircle}
+                <circle cx="0" cy="0" r="100" fill={slice.color} stroke="white" stroke-width="1.5">
+                  <title>{slice.label}: {slice.count.toLocaleString()} alignment{slice.count !== 1 ? 's' : ''} ({slice.percent.toFixed(2)}% of total)</title>
+                </circle>
+              {:else}
+                <path d={slice.path} fill={slice.color} stroke="white" stroke-width="1.5">
+                  <title>{slice.label}: {slice.count.toLocaleString()} alignment{slice.count !== 1 ? 's' : ''} ({slice.percent.toFixed(2)}% of total)</title>
+                </path>
+              {/if}
+            {/each}
+          </svg>
+          <div style="flex:1; min-width:240px; display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:6px 16px;">
+            {#each offTargetSlices as slice}
+              <div style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                <span style="display:inline-block; width:12px; height:12px; border-radius:2px; background:{slice.color}; flex-shrink:0;"></span>
+                <span style="flex:1; color:#1f2937; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title={slice.label}>
+                  {slice.label}
+                </span>
+                <span style="color:#6b7280; font-variant-numeric:tabular-nums;">
+                  {slice.count.toLocaleString()} ({slice.percent.toFixed(2)}%)
+                </span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+    {/if}
     <div style="margin-top:1.5rem;">
       <h3 style="margin:0 0 12px 0; font-weight:600; font-size:16px;">Probe Alignment Browser</h3>
-      
-      {#if allAlignments.length > 0}
-        <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px;">
-          <label for="mismatch-filter" style="font-size:14px; color:#374151;">Filter by mismatches:</label>
-          <select
-            id="mismatch-filter"
-            on:change={(e) => onMismatchFilterChange(e.target.value)}
-            style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; font-size:14px;"
-          >
-            <option value="all">All</option>
-            <option value="0">0 mismatches</option>
-            <option value="1">1 mismatch</option>
-            <option value="2">2 mismatches</option>
-            <option value="3">3 mismatches</option>
-          </select>
-          <span style="margin-left:auto; font-size:14px; color:#6b7280;">
-            {totalAlignments.toLocaleString()} total alignments
+
+      {#if alignments.length > 0}
+        <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <span style="font-size:14px; color:#374151;">
+            Showing first {alignments.length.toLocaleString()} of {totalAlignments.toLocaleString()} alignments. Download the TSV for full data.
           </span>
-          <button
-            on:click={downloadAlignments}
-            disabled={filteredAlignments.length === 0}
+          <a
+            href={`/jobs/${jobId}/alignments/download`}
             class="download-link"
+            style="margin-left:auto;"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
             </svg>
-            <span>{mismatchFilter === null ? 'Download All' : 'Download Filtered'} ({filteredAlignments.length})</span>
-          </button>
+            <span>Download all alignments ({totalAlignments.toLocaleString()})</span>
+          </a>
         </div>
       {/if}
 
@@ -1327,11 +1514,7 @@
                       {aln.target_transcript}
                     </td>
                     <td style="padding:8px; color:#1f2937; font-weight:600;">
-                      {#if info?.species === 'human' || info?.species === 'mouse'}
-                        {aln.gene_id || '-'}
-                      {:else}
-                        {aln.species || '-'}
-                      {/if}
+                      {alignmentLabel(aln)}
                     </td>
                     <td style="padding:10px; text-align:center;">
                       <span style="padding:3px 8px; border-radius:3px; font-weight:600; background:{aln.mismatches <= 1 ? '#fee2e2' : '#fff7ed'}; color:{aln.mismatches <= 1 ? '#991b1b' : '#9a3412'};">
@@ -1352,68 +1535,38 @@
             </tbody>
           </table>
         </div>
-        <div style="margin-top:16px; display:flex; justify-content:center; align-items:center; gap:8px;">
-          <button
-            on:click={prevPage}
-            disabled={alignmentsPrevDisabled}
-            style="
-              padding:6px 12px;
-              border:1px solid #d1d5db;
-              border-radius:4px;
-              background:{alignmentsPrevDisabled ? '#e5e7eb' : '#3b82f6'};
-              color:{alignmentsPrevDisabled ? '#9ca3af' : 'white'};
-              cursor:{alignmentsPrevDisabled ? 'not-allowed' : 'pointer'};
-              font-weight:500;
-              font-size:13px;
-              opacity:{alignmentsPrevDisabled ? 0.6 : 1};
-            "
-          >
-            Previous
-          </button>
-          
-          {#each pageNumbers as pageNum}
-            {#if pageNum === '...'}
-              <span style="padding:6px 8px; color:#9ca3af;">...</span>
-            {:else}
+        {#if alignmentsTotalPages > 1}
+          {@const prevDisabled = alignmentsPage <= 1}
+          {@const nextDisabled = alignmentsPage >= alignmentsTotalPages}
+          <div style="margin-top:12px; display:flex; justify-content:center; align-items:center; gap:8px; flex-wrap:wrap; font-size:13px;">
+            <button
+              on:click={() => goToAlignmentsPage(alignmentsPage - 1)}
+              disabled={prevDisabled}
+              style="padding:6px 10px; border:1px solid #d1d5db; border-radius:4px; background:{prevDisabled ? '#e5e7eb' : '#3b82f6'}; color:{prevDisabled ? '#9ca3af' : 'white'}; cursor:{prevDisabled ? 'not-allowed' : 'pointer'}; font-weight:500;"
+            >Previous</button>
+            {#each Array(alignmentsTotalPages) as _, i}
+              {@const num = i + 1}
+              {@const active = num === alignmentsPage}
               <button
-                on:click={() => goToPage(pageNum)}
-                style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:{pageNum === currentPage ? '#3b82f6' : 'white'}; color:{pageNum === currentPage ? 'white' : '#374151'}; cursor:pointer; font-weight:{pageNum === currentPage ? 600 : 400};"
-              >
-                {pageNum}
-              </button>
-            {/if}
-          {/each}
-          
-          <button
-            on:click={nextPage}
-            disabled={alignmentsNextDisabled}
-            style="
-              padding:6px 12px;
-              border:1px solid #d1d5db;
-              border-radius:4px;
-              background:{alignmentsNextDisabled ? '#e5e7eb' : '#3b82f6'};
-              color:{alignmentsNextDisabled ? '#9ca3af' : 'white'};
-              cursor:{alignmentsNextDisabled ? 'not-allowed' : 'pointer'};
-              font-weight:500;
-              font-size:13px;
-              opacity:{alignmentsNextDisabled ? 0.6 : 1};
-            "
-          >
-            Next
-          </button>
-        </div>
+                on:click={() => goToAlignmentsPage(num)}
+                style="padding:6px 12px; border:1px solid #d1d5db; border-radius:4px; background:{active ? '#3b82f6' : 'white'}; color:{active ? 'white' : '#374151'}; cursor:pointer; font-weight:{active ? 600 : 400};"
+              >{num}</button>
+            {/each}
+            <button
+              on:click={() => goToAlignmentsPage(alignmentsPage + 1)}
+              disabled={nextDisabled}
+              style="padding:6px 10px; border:1px solid #d1d5db; border-radius:4px; background:{nextDisabled ? '#e5e7eb' : '#3b82f6'}; color:{nextDisabled ? '#9ca3af' : 'white'}; cursor:{nextDisabled ? 'not-allowed' : 'pointer'}; font-weight:500;"
+            >Next</button>
+          </div>
+        {/if}
       {:else if loadingAlignments}
         <div style="padding:40px; display:flex; justify-content:center; align-items:center; gap:10px; color:#6b7280; background:#f9fafb; border-radius:6px;">
           <div class="spinner"></div>
           <span>Loading alignments...</span>
         </div>
-      {:else if allAlignments.length === 0}
-        <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
-          No off-target alignment.
-        </div>
       {:else}
         <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
-          No alignments found for the selected filter.
+          No off-target alignment.
         </div>
       {/if}
     </div>
@@ -1455,7 +1608,6 @@
     align-items: center;
     gap: 6px;
     color: white;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
     font-weight: 600;
     line-height: 1.2;

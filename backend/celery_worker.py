@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, align_microbiome=False, align_host=False, tm_range="42-47"):    
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False):
     """
     Run the probe design pipeline.
     
@@ -67,7 +67,7 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
         )
         
         input_path = Path(storage_dir) / input_file
-        output_dir = ROOT / "outputs" / "alignments" / job_id
+        output_dir = ROOT / "output" / "alignments" / job_id
         output_dir.mkdir(parents=True, exist_ok=True)
         
         log_file = output_dir / "pipeline_log.txt"
@@ -92,10 +92,15 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             "--task-id", job_id,
         ]
         cmd.extend(["--tm-range", tm_range])
+        cmd.extend(["--gc-range", gc_range])
         if align_microbiome:
             cmd.append("--align-microbiome")
         if align_host:
             cmd.append("--align-host")
+        if host_internal_mode:
+            cmd.append("--host-internal-mode")
+        if microbe_mode:
+            cmd.append("--microbe-mode")
 
         stdin_data = None
         if input_type == "gene_sequence":

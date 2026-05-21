@@ -15,10 +15,10 @@ import logging
 from datetime import datetime
 from pathlib import Path
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Dict
 import re
 from fastapi import FastAPI, HTTPException, Form, Request, Query
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -121,6 +121,19 @@ class RegionsResponse(BaseModel):
     gene_length: int
     regions: List[ProbeRegion]
 
+@app.get("/api/organisms", summary="Organism registry from config/organisms.yml")
+def get_organism_registry():
+    """Return the host + microbiome catalog config so the frontend builds
+    its dropdowns dynamically from `config/organisms.yml` (no hard-coded
+    species in the UI)."""
+    import sys as _sys
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from core.organism_registry import load_registry
+    return load_registry().to_json_dict()
+
+
 @app.get("/jobs/{job_id}/probe-regions", response_model=RegionsResponse)
 def get_probe_regions(job_id: str):
     """
@@ -136,7 +149,7 @@ def get_probe_regions(job_id: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid job ID format") from e
 
-    job_dir = ROOT / "outputs" / "alignments" / job_id
+    job_dir = ROOT / "output" / "alignments" / job_id
     candidate_probes_file = job_dir / "candidate_probes.fa"
     aligned_sam_file = job_dir / "filtered_probe_alignments.sam"
     
@@ -220,6 +233,137 @@ def get_probe_regions(job_id: str):
         logger.exception("Failed to parse probe regions for job %s", job_id)
         raise HTTPException(status_code=500, detail="Failed to parse probe regions") from e
 
+_HOST_LOOKUP: Dict[str, object] = {"loaded": False, "transcript": {}, "symbol": {}}
+_HOST_TOKEN_SPLIT = re.compile(r'[\s|,;:()\[\]]+')
+_HOST_BINOMIAL_RE = re.compile(r'\b(Homo\s+sapiens|Mus\s+musculus)\b', re.IGNORECASE)
+
+
+def _load_host_lookup() -> None:
+    """Lazy-load human + mouse transcript→gene mappings into reverse-lookup dicts.
+
+    Both maps are merged into a single transcript-id → species dict and a single
+    gene-symbol → species dict. Ensembl version suffix is stripped so both
+    'ENST00000372348' and 'ENST00000372348.5' resolve. Idempotent.
+    """
+    if _HOST_LOOKUP["loaded"]:
+        return
+    import sys as _sys
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from probe_designer import samannotator  # reuses existing cache loader
+    transcript_map: Dict[str, str] = {}
+    symbol_map: Dict[str, str] = {}
+    for sp in ("human", "mouse"):
+        ann = samannotator()
+        try:
+            ann._ensure_mappings_loaded(sp)
+        except Exception:
+            logger.exception("Failed to load %s mappings for host-token check", sp)
+            continue
+        for tid, gname in ann.mappings.items():
+            transcript_map.setdefault(tid, sp)
+            transcript_map.setdefault(tid.split('.')[0], sp)
+            if gname:
+                symbol_map.setdefault(gname, sp)
+
+    # Additional source: NCBI RefSeq RNA accessions (e.g. NM_005228, XM_…).
+    # Built once via data/ncbi/build_refseq_lookup.py. Added on top of the
+    # GENCODE/Ensembl lookup; existing entries are not overwritten.
+    refseq_path = os.path.join(_root, "data", "ncbi", "refseq_to_gene.tsv")
+    refseq_count = 0
+    if os.path.exists(refseq_path):
+        try:
+            with open(refseq_path, "r", encoding="utf-8") as fh:
+                next(fh, None)  # header
+                for line in fh:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) < 3:
+                        continue
+                    rid, sym, sp = parts[0], parts[1], parts[2]
+                    if not rid or not sp:
+                        continue
+                    transcript_map.setdefault(rid, sp)
+                    if sym:
+                        symbol_map.setdefault(sym, sp)
+                    refseq_count += 1
+        except OSError:
+            logger.exception("Failed to load NCBI RefSeq lookup at %s", refseq_path)
+
+    _HOST_LOOKUP["transcript"] = transcript_map
+    _HOST_LOOKUP["symbol"] = symbol_map
+    _HOST_LOOKUP["loaded"] = True
+    logger.info("Host-token lookup loaded: %d transcript IDs, %d gene symbols (incl. %d RefSeq)",
+                len(transcript_map), len(symbol_map), refseq_count)
+
+
+def detect_host_tokens(fasta_text: str) -> List[Dict[str, str]]:
+    """Scan FASTA headers for host (human/mouse) transcript IDs or gene symbols.
+
+    Returns a deduped list of {token, kind, species}. Empty list means clean.
+    """
+    if not fasta_text:
+        return []
+    _load_host_lookup()
+    tmap = _HOST_LOOKUP["transcript"]
+    smap = _HOST_LOOKUP["symbol"]
+    seen = set()
+    matches: List[Dict[str, str]] = []
+    for line in fasta_text.splitlines():
+        line = line.strip()
+        if not line.startswith('>'):
+            continue
+        # Latin binomial ("Homo sapiens" / "Mus musculus") in the header is a
+        # definitive host signal — independent of any gene-name lookup.
+        bm = _HOST_BINOMIAL_RE.search(line)
+        if bm:
+            binom = bm.group(1)
+            sp = "human" if binom.lower().startswith("homo") else "mouse"
+            key = ("species_name", binom.lower(), sp)
+            if key not in seen:
+                seen.add(key)
+                matches.append({"token": binom, "kind": "species_name", "species": sp})
+        for raw in _HOST_TOKEN_SPLIT.split(line[1:]):
+            if not raw:
+                continue
+            # Candidates: full token, version-stripped form, underscore-split parts.
+            # Trying the full form first preserves exact-match for the ~941 host
+            # symbols that contain '_' (e.g. '5_8S_rRNA', 'Metazoa_SRP'); the
+            # underscore-split parts catch user-supplied composites like
+            # 'EGFR_transcript' or 'ABL1_var2'.
+            candidates = [raw, re.sub(r'\.\d+$', '', raw)]
+            if '_' in raw:
+                candidates.extend(p for p in raw.split('_') if p)
+            for cand in candidates:
+                if cand in tmap:
+                    sp = tmap[cand]
+                    key = ('transcript', cand, sp)
+                    if key not in seen:
+                        seen.add(key)
+                        matches.append({"token": cand, "kind": "transcript", "species": sp})
+                    break
+                if cand in smap:
+                    sp = smap[cand]
+                    key = ('symbol', cand, sp)
+                    if key not in seen:
+                        seen.add(key)
+                        matches.append({"token": cand, "kind": "symbol", "species": sp})
+                    break
+    return matches
+
+
+def _host_token_message(matches: List[Dict[str, str]]) -> str:
+    if not matches:
+        return ""
+    # Show the most user-recognizable example: gene symbol > species name > transcript ID.
+    priority = {"symbol": 0, "species_name": 1, "transcript": 2}
+    best = min(matches, key=lambda m: priority.get(m["kind"], 9))
+    return (
+        f"Host sequence detected (e.g., {best['token']}). "
+        "Please paste a microbial gene/transcript instead."
+    )
+
+
 def validate_fasta_content(content: bytes, content_type: str) -> tuple[bool, Optional[str]]:
     """Validate FASTA format and DNA alphabet.
 
@@ -258,6 +402,67 @@ def validate_fasta_content(content: bytes, content_type: str) -> tuple[bool, Opt
     return True, None
 
 
+@app.post("/validate-host-token", summary="Detect host (human/mouse) tokens in FASTA headers")
+async def validate_host_token(fasta: str = Form(""), species: str = Form("")):
+    """Detect host identifiers in the FASTA header and return a routing verdict.
+
+    Response fields:
+        is_host: bool — any host token detected.
+        matches: list — raw match records.
+        detected_species: list — unique host species inferred (e.g. ["human"]).
+        should_block: bool — frontend should reject submission.
+        host_internal_mode: bool — backend will run host-internal design.
+        message: str — user-facing message explaining the verdict.
+    """
+    import sys as _sys
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from core.organism_registry import load_registry as _load_reg
+    _registry = _load_reg()
+
+    matches = detect_host_tokens(fasta)
+    if not matches:
+        return {
+            "is_host": False, "matches": [], "detected_species": [],
+            "should_block": False, "host_internal_mode": False, "message": "",
+        }
+
+    detected = sorted({m['species'] for m in matches})
+    sel = (species or "").strip()
+    should_block = False
+    host_internal_mode = False
+    message = _host_token_message(matches)
+
+    if _registry.is_host_species(sel):
+        if len(detected) > 1:
+            should_block = True
+            message = "Pasted FASTA contains identifiers from multiple host species; cannot determine target."
+        elif detected[0] != sel:
+            should_block = True
+            message = f"Pasted FASTA is {detected[0]} but selected target is {sel}. Select {detected[0]} or paste a {sel} sequence."
+        else:
+            host_internal_mode = True
+            message = f"Host sequence detected — designing probes within the {sel} transcriptome (source-only filter)."
+    elif _registry.is_microbiome_species(sel):
+        message = f"Host sequence detected; running standard pipeline against {sel}."
+    elif sel:
+        should_block = True
+    else:
+        # No species supplied: keep legacy behavior so callers without context
+        # still get the original blocking message.
+        should_block = True
+
+    return {
+        "is_host": True,
+        "matches": matches,
+        "detected_species": detected,
+        "should_block": should_block,
+        "host_internal_mode": host_internal_mode,
+        "message": message,
+    }
+
+
 @app.post("/jobs", response_model=JobResponse, summary="Create probe design job")
 async def create_job(
     species: str = Form("human"),
@@ -269,6 +474,8 @@ async def create_job(
     align_microbiome: str = Form("false"),
     align_host: str = Form("false"),
     tm_range: str = Form("42-47"),
+    gc_range: str = Form("40-80"),
+    mode: str = Form("microbe"),
 ):
     
     input_type = 'gene' if gene_sequence.strip() else ('probe' if probe_sequence.strip() else 'none')
@@ -336,6 +543,61 @@ async def create_job(
     if not is_valid:
         raise HTTPException(status_code=400, detail=f"FASTA validation failed: {validation_error}")
 
+    # Defense-in-depth: handle host transcript/gene names. Frontend runs the
+    # same routing on Submit; this also catches direct API consumers
+    # (curl, /docs, scripted clients).
+    #
+    # Routing:
+    #   - Host detected + host species (human/mouse) selected, species matches
+    #       -> proceed with --host-internal-mode (design within source gene)
+    #   - Host detected + host species selected, species mismatch
+    #       -> block with explicit mismatch error
+    #   - Host detected + microbiome species selected
+    #       -> proceed with current pipeline unchanged
+    # Pull host/microbiome membership from the organism registry instead of
+    # a hard-coded set, so new hosts (e.g. zebrafish) added via YAML are
+    # recognized here automatically.
+    import sys as _sys
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in _sys.path:
+        _sys.path.insert(0, _root)
+    from core.organism_registry import load_registry as _load_reg
+    _registry = _load_reg()
+    is_host_species_id = _registry.is_host_species
+    is_microbiome_species_id = _registry.is_microbiome_species
+
+    host_matches = detect_host_tokens(content.decode('utf-8', errors='ignore'))
+    host_internal_mode = False
+    # Microbial Probe Design mode: the user explicitly chose to treat input as
+    # microbial. Skip host-token routing entirely — any host alignment further
+    # down the pipeline is handled as cross-reactivity, not as a redirect.
+    if (mode or "").lower() == "microbe":
+        host_matches = []
+    if host_matches:
+        detected_species = {m['species'] for m in host_matches}
+        if is_host_species_id(species):
+            if len(detected_species) > 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Pasted FASTA contains identifiers from multiple host species; cannot determine target.",
+                )
+            detected = next(iter(detected_species))
+            if detected != species:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Pasted FASTA is {detected} but selected target is {species}. Select {detected} or paste a {species} sequence.",
+                )
+            host_internal_mode = True
+        elif not is_microbiome_species_id(species):
+            raise HTTPException(status_code=400, detail=_host_token_message(host_matches))
+
+    # Honor the user's explicit Host Probe Design choice even when the header
+    # carries no recognizable token (e.g. `>epidermal mRNA`). The host-internal
+    # filter groups alignments by gene and keeps probes that hit only one gene
+    # (all isoforms count as one), so it doesn't need a header-derived source.
+    if (mode or "").lower() == "host" and is_host_species_id(species):
+        host_internal_mode = True
+
     if input_type == 'gene_sequence':
         lines = gene_sequence.strip().split('\n')
         current_header = ''
@@ -390,6 +652,9 @@ async def create_job(
         'align_microbiome': align_microbiome.lower() == 'true',
         'align_host': align_host.lower() == 'true',
         'tm_range': tm_range,
+        'gc_range': gc_range,
+        'host_internal_mode': host_internal_mode,
+        'microbe_mode': (mode or "").lower() == "microbe",
     }
     
     try:
@@ -456,7 +721,7 @@ def get_job(job_id: str):
         else:
             info = {}
         if state in ['SUCCESS', 'FAILURE']:
-            job_dir = ROOT / "outputs" / "alignments" / job_id
+            job_dir = ROOT / "output" / "alignments" / job_id
             log_file = job_dir / "pipeline_log.txt"
             
             if log_file.exists():
@@ -471,7 +736,7 @@ def get_job(job_id: str):
             submitted_at = jobs[job_id].get("submitted_at", "unknown")
             input_type = jobs[job_id].get("input_type", "unknown")
         else:
-            job_dir = ROOT / "outputs" / "alignments" / job_id
+            job_dir = ROOT / "output" / "alignments" / job_id
             if job_dir.exists():
                 try:
                     submitted_at = datetime.fromtimestamp(job_dir.stat().st_ctime).isoformat() + "Z"
@@ -592,7 +857,7 @@ def list_job_files(job_id: str):
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid job ID format") from e
     
-    job_dir = ROOT / "outputs" / "alignments" / job_id
+    job_dir = ROOT / "output" / "alignments" / job_id
     
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job results not found")
@@ -639,7 +904,7 @@ def get_job_alignments(
     except ValueError as e:
         raise HTTPException(status_code=400, detail="Invalid job ID format") from e
 
-    job_dir = ROOT / "outputs" / "alignments" / job_id
+    job_dir = ROOT / "output" / "alignments" / job_id
     annotated_sam = job_dir / "filtered_probe_alignments_annotated.sam"
     sam_file = annotated_sam if annotated_sam.exists() else job_dir / "filtered_probe_alignments.sam"
 
@@ -662,9 +927,14 @@ def get_job_alignments(
             "total_pages": 0
         }
     
+    src_gene, src_transcripts = _load_job_source(job_dir)
+
     if probe_id is not None:
         try:
-            alignments = parse_sam_file(str(sam_file), probe_id_filter=probe_id)
+            alignments = parse_sam_file(
+                str(sam_file), probe_id_filter=probe_id,
+                source_gene=src_gene, source_transcripts=src_transcripts,
+            )
             return {
                 "job_id": job_id,
                 "total_alignments": len(alignments),
@@ -676,24 +946,20 @@ def get_job_alignments(
         except Exception as e:
             logger.exception("Failed to parse alignments for probe %s in job %s", probe_id, job_id)
             raise HTTPException(status_code=500, detail="Failed to parse alignment data") from e
-    
+
     try:
-        all_alignments = parse_sam_file(str(sam_file), mismatch_filter=mismatch)
-        # Sort by probe numeric ID to group all alignments for the same probe together
-        def probe_sort_key(a):
-            m = re.search(r'probe_(\d+)', a['probe_id'])
-            return int(m.group(1)) if m else 0
-        all_alignments.sort(key=probe_sort_key)
-        total_count = len(all_alignments)
+        # Streaming fast path: skip to the requested offset and parse only the
+        # records for this page. Avoids the full-SAM parse + sort that
+        # previously cost ~10s on 500K-row jobs.
+        offset = (page - 1) * page_size
+        alignments = parse_sam_file(
+            str(sam_file), offset=offset, limit=page_size, mismatch_filter=mismatch,
+            source_gene=src_gene, source_transcripts=src_transcripts,
+        )
+        total_count = count_sam_alignments(
+            str(sam_file), source_gene=src_gene, source_transcripts=src_transcripts,
+        )
         total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
-
-        if page > total_pages and total_pages > 0:
-            raise HTTPException(status_code=400, detail=f"Page {page} exceeds total pages {total_pages}")
-
-        start_idx = (page - 1) * page_size
-        end_idx = start_idx + page_size
-        alignments = all_alignments[start_idx:end_idx]
-        
         return {
             "job_id": job_id,
             "total_alignments": total_count,
@@ -706,7 +972,226 @@ def get_job_alignments(
     except Exception as e:
         logger.exception("Failed to parse alignments for job %s", job_id)
         raise HTTPException(status_code=500, detail="Failed to parse alignment data") from e
-    
+
+
+def _load_job_source(job_dir) -> tuple:
+    """Read source_info.json for a job. Returns (source_gene, source_transcripts).
+    Both are empty when the file is missing or has no inferred source."""
+    src_path = job_dir / "source_info.json"
+    if not src_path.exists():
+        return None, []
+    try:
+        import json as _json
+        with open(src_path, 'r', encoding='utf-8') as fh:
+            info = _json.load(fh)
+        return (info.get('source_gene') or None, list(info.get('source_transcripts') or []))
+    except (OSError, ValueError):
+        logger.warning("Failed to read source_info.json at %s", src_path)
+        return None, []
+
+
+def _gc_percent(seq: str) -> str:
+    if not seq:
+        return ''
+    clean = seq.replace('-', '').upper()
+    if not clean:
+        return ''
+    gc = sum(1 for c in clean if c in 'GC')
+    return f"{(gc / len(clean)) * 100:.1f}%"
+
+
+@app.get("/jobs/{job_id}/alignments/download")
+def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(None, ge=0)):
+    """
+    Stream all parsed alignments as a TSV. Used by the UI's 'download full
+    alignments' button so the browser doesn't have to hold the full set in memory.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid job ID format") from e
+
+    job_dir = ROOT / "output" / "alignments" / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Job results not found")
+
+    sam_file = job_dir / "filtered_probe_alignments_annotated.sam"
+    if not sam_file.exists():
+        sam_file = job_dir / "filtered_probe_alignments.sam"
+    if not sam_file.exists():
+        raise HTTPException(status_code=404, detail="Alignment file not found")
+
+    headers = [
+        'Probe ID', 'Probe Sequence', 'GC%', 'Target Sequence',
+        'Target Transcript', 'Gene ID', 'Species',
+        'Mismatches', 'Position', 'Strand'
+    ]
+
+    src_gene, src_transcripts = _load_job_source(job_dir)
+
+    def row_iter():
+        yield '\t'.join(headers) + '\n'
+        try:
+            alignments = parse_sam_file(
+                str(sam_file), mismatch_filter=mismatch,
+                source_gene=src_gene, source_transcripts=src_transcripts,
+            )
+        except Exception:
+            logger.exception("Failed to parse alignments for download (job %s)", job_id)
+            return
+        for a in alignments:
+            probe_seq = (a.get('sequence') or '').upper().replace('-', '')
+            target = a.get('target_transcript') or ''
+            gene_id = a.get('gene_id') or ''
+            species = a.get('species') or ''
+            # When species/gene_id is unclassified, fall back to the target rname
+            # so the user gets a meaningful label instead of literal 'Unknown'.
+            if not gene_id or gene_id == 'Unknown':
+                gene_id = target
+            if not species or species == 'Unknown':
+                species = target
+            row = [
+                a.get('probe_id') or '',
+                probe_seq,
+                _gc_percent(probe_seq),
+                a.get('target_sequence') or '',
+                target,
+                gene_id,
+                species,
+                str(a.get('mismatches') if a.get('mismatches') is not None else ''),
+                str(a.get('position') if a.get('position') is not None else ''),
+                a.get('strand') or '',
+            ]
+            yield '\t'.join(row) + '\n'
+
+    suffix = 'all' if mismatch is None else f'mm{mismatch}'
+    filename = f'probe_alignments_{suffix}.tsv'
+    return StreamingResponse(
+        row_iter(),
+        media_type='text/tab-separated-values',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'}
+    )
+
+
+OFFTARGET_TOP_N_DEFAULT = 12
+
+@app.get("/jobs/{job_id}/offtarget-summary")
+def get_offtarget_summary(job_id: str, top_n: int = Query(OFFTARGET_TOP_N_DEFAULT, ge=1, le=100)):
+    """
+    Lightweight aggregation of off-target alignments grouped by species (microbiome)
+    or gene_id (host transcripts). When the species/gene label is 'Unknown', falls
+    back to the SAM target reference name (rname). Streams the SAM once without
+    parsing CIGAR/MD/sequences, so it's ~17x faster than /alignments for large jobs.
+    """
+    try:
+        uuid.UUID(job_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail="Invalid job ID format") from e
+
+    job_dir = ROOT / "output" / "alignments" / job_id
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Job results not found")
+
+    sam_file = job_dir / "filtered_probe_alignments_annotated.sam"
+    if not sam_file.exists():
+        sam_file = job_dir / "filtered_probe_alignments.sam"
+    if not sam_file.exists():
+        return {
+            "job_id": job_id,
+            "group_by": None,
+            "total_alignments": 0,
+            "total_groups": 0,
+            "hidden_groups": 0,
+            "excluded_unknown": 0,
+            "groups": [],
+        }
+
+    # Self-alignment exclusion: when the pipeline identified a source gene/
+    # transcripts (e.g. host-internal mode), drop those hits from the
+    # off-target tally so the chart reflects truly off-target alignments only.
+    source_gene, source_transcripts_list = _load_job_source(job_dir)
+    source_transcripts = set(source_transcripts_list)
+    source_transcripts_versionless = {t.split('.', 1)[0] for t in source_transcripts}
+
+    sp_pattern = re.compile(r'\tSP:Z:([^\t\n]+)')
+    counts: Dict[str, int] = {}
+    excluded_unknown = 0
+    excluded_self = 0
+    total = 0
+    group_by = None
+    seen_keys: set = set()
+    try:
+        with open(sam_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                if line.startswith('@') or not line.strip():
+                    continue
+                parts = line.split('\t', 11)
+                if len(parts) < 5:
+                    continue
+                # Annotated host SAM has gene_id in column 4 (non-numeric); microbiome has SP:Z tag.
+                col4 = parts[3]
+                rname = parts[2]
+                qname = parts[0]
+                try:
+                    flag = int(parts[1])
+                except ValueError:
+                    flag = 0
+                key = None
+                try:
+                    pos = int(col4)
+                except ValueError:
+                    key = col4 if col4 and col4 != '*' else None
+                    if key is not None and group_by is None:
+                        group_by = 'gene'
+                    try:
+                        pos = int(parts[4])
+                    except (ValueError, IndexError):
+                        pos = -1
+                if key is None:
+                    m = sp_pattern.search(line)
+                    if m:
+                        key = m.group(1)
+                        if group_by is None:
+                            group_by = 'species'
+                if key is None or key == 'Unknown':
+                    # Fall back to the target reference name when species/gene
+                    # is unclassified, so the user gets a meaningful label.
+                    key = rname if rname and rname != '*' else None
+                if key is None:
+                    continue
+                # Skip self-alignments to the source gene/transcript.
+                rname_base = rname.split('.', 1)[0] if rname else ''
+                is_self = (
+                    (source_gene and key == source_gene) or
+                    (rname and rname in source_transcripts) or
+                    (rname_base and rname_base in source_transcripts_versionless)
+                )
+                if is_self:
+                    excluded_self += 1
+                    continue
+                strand = '-' if (flag & 0x10) else '+'
+                dedup_key = (qname, rname, pos, strand)
+                if dedup_key in seen_keys:
+                    continue
+                seen_keys.add(dedup_key)
+                total += 1
+                counts[key] = counts.get(key, 0) + 1
+    except OSError as e:
+        logger.exception("Failed to read SAM for job %s", job_id)
+        raise HTTPException(status_code=500, detail="Failed to read alignment file") from e
+
+    sorted_groups = sorted(counts.items(), key=lambda kv: -kv[1])
+    top = sorted_groups[:top_n]
+    return {
+        "job_id": job_id,
+        "group_by": group_by or 'species',
+        "total_alignments": total,
+        "total_groups": len(sorted_groups),
+        "hidden_groups": max(0, len(sorted_groups) - len(top)),
+        "excluded_unknown": excluded_unknown,
+        "groups": [{"label": label, "count": count} for label, count in top],
+    }
+
 
 @app.get("/jobs/{job_id}/download/{filename}")
 def download_job_file(job_id: str, filename: str):
@@ -720,7 +1205,7 @@ def download_job_file(job_id: str, filename: str):
     if "/" in filename or "\\" in filename or filename.startswith("."):
         raise HTTPException(status_code=400, detail="Invalid filename")
     
-    job_dir = ROOT / "outputs" / "alignments" / job_id
+    job_dir = ROOT / "output" / "alignments" / job_id
     
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job results not found")

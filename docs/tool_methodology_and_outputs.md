@@ -72,7 +72,7 @@ microbe_genome/
 ├── data/                    # Reference genomes and annotations
 │   ├── gencode_data/        # GENCODE human/mouse data
 │   └── {species}/           # Microbiome genome collections
-└── outputs/
+└── output/
     └── alignments/
         └── {job_id}/        # Job-specific output directory
             ├── chroms/      # Per-chromosome alignment files
@@ -357,7 +357,7 @@ GATCGATCGATCGA   12-25      ENST00000345678.2            TUBB         54321
 2. **probe-designer-api** - FastAPI backend
    - Build: [`backend/Dockerfile`](backend/Dockerfile)
    - Port: 8002 (internal)
-   - Volumes: Code, data, outputs
+   - Volumes: Code, data, output
    - Dependencies: samtools, gffread, razers3
 
 3. **probe-designer-worker** - Celery worker
@@ -560,14 +560,14 @@ GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCT
 - Check broker URL configuration
 
 **JBrowse Not Loading:**
-- Verify JBrowse files generated in `outputs/alignments/{job_id}/`
+- Verify JBrowse files generated in `output/alignments/{job_id}/`
 - Check BAM file creation and indexing
 - Review browser console for React/JBrowse errors
 
 **Pipeline Failures:**
 - Check genome download and decompression
 - Verify razers3 binary exists in `bin/` directory
-- Review pipeline logs in `outputs/alignments/{job_id}/pipeline_log.txt`
+- Review pipeline logs in `output/alignments/{job_id}/pipeline_log.txt`
 
 **14-mer Safety Check Issues:**
 - Check 14-mer generation and alignment steps
@@ -631,7 +631,7 @@ python probe_designer.py --gene-sequence ">test\nATCGATCG" --species human --pro
 **14-mer Safety Testing:**
 ```bash
 python probe_designer.py --gene-sequence ">test\nATCGATCGATCGATCGATCGATCGATCGAT" --species human --probe-length 30
-# Check outputs/alignments/{job_id}/14mer_matches_report.txt for detailed results
+# Check output/alignments/{job_id}/14mer_matches_report.txt for detailed results
 ```
 
 ---
@@ -699,8 +699,8 @@ python probe_designer.py --gene-sequence ">test\nATCGATCGATCGATCGATCGATCGATCGAT"
 For issues or questions, please refer to:
 - Project repository documentation
 - API interactive docs at `/docs` endpoint  
-- Pipeline logs in `outputs/alignments/{job_id}/pipeline_log.txt`
-- 14-mer match reports in `outputs/alignments/{job_id}/14mer_matches_report.txt`
+- Pipeline logs in `output/alignments/{job_id}/pipeline_log.txt`
+- 14-mer match reports in `output/alignments/{job_id}/14mer_matches_report.txt`
 - JBrowse integration logs in browser console
 - Celery worker logs via `docker-compose logs probe-designer-worker`
 

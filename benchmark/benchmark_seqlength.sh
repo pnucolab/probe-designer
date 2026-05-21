@@ -56,7 +56,7 @@ fi
 for KB in "${SEQ_LENGTHS_KB[@]}"; do
     TARGET_LEN=$((KB * 1000))
     TASK_ID="benchmark_seq${KB}kb"
-    mkdir -p "outputs/alignments/${TASK_ID}"
+    mkdir -p "output/alignments/${TASK_ID}"
 
     # Build sequence of target length by tiling the input
     TILED_SEQ=""
@@ -82,7 +82,7 @@ for KB in "${SEQ_LENGTHS_KB[@]}"; do
         --species "$SPECIES" \
         --task-id "$TASK_ID" \
         "${EXTRA_ARGS[@]}" \
-        > "outputs/alignments/${TASK_ID}/run.log" 2>&1 || true
+        > "output/alignments/${TASK_ID}/run.log" 2>&1 || true
 
     END=$(date +%s%N)
     ELAPSED=$(( (END - START) / 1000000000 )).$(( ((END - START) % 1000000000) / 1000000 ))

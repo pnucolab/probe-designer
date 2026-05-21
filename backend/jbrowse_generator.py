@@ -127,15 +127,29 @@ class JBrowseFileGenerator:
                         is_microbiome = True
                         break
         
-        # Infer source transcripts and classify probes
+        # Source-of-truth: prefer the pipeline's persisted decision (source_info.json
+        # written by probe_designer.py). Fall back to local alignment-pattern inference
+        # only when that file is absent (older jobs).
         probe_classifications = {}
+        host_internal_mode = False
         if aligned_sam_file.exists():
-            source_info = infer_source_transcripts(str(aligned_sam_file))
+            source_info_file = self.output_dir / "source_info.json"
+            if source_info_file.exists():
+                import json as _json
+                with open(source_info_file, 'r', encoding='utf-8') as _sf:
+                    _src = _json.load(_sf)
+                source_transcripts = set(_src.get('source_transcripts') or [])
+                source_gene = _src.get('source_gene')
+                host_internal_mode = bool(_src.get('host_internal_mode'))
+            else:
+                source_info = infer_source_transcripts(str(aligned_sam_file))
+                source_transcripts = source_info['source_transcripts']
+                source_gene = source_info['source_gene']
             probe_classifications = classify_probes_from_sam(
                 str(aligned_sam_file),
                 is_microbiome=is_microbiome,
-                source_transcripts=source_info['source_transcripts'],
-                source_gene=source_info['source_gene']
+                source_transcripts=source_transcripts,
+                source_gene=source_gene
             )
         
         # Load safe probes from safe_probes_scores.txt if it exists
@@ -181,11 +195,15 @@ class JBrowseFileGenerator:
                                 status = 'medium_risk'
                                 mismatches = None
                         else:
-                            # No alignments - check if in safe probes (passed k-mer analysis)
+                            # No alignments. In Host Probe Design that means the
+                            # probe doesn't bind the source gene at all — surface
+                            # as its own `no_alignment` category so the UI can
+                            # distinguish "no hit anywhere" from "k-mer failed".
                             if probe_id_display in safe_probe_ids:
                                 status = 'safe'
+                            elif host_internal_mode:
+                                status = 'no_alignment'
                             else:
-                                # Not in safe probes = failed k-mer analysis = medium_risk
                                 status = 'medium_risk'
                             mismatches = None
                         
@@ -233,14 +251,16 @@ class JBrowseFileGenerator:
                 color_map = {
                     'high_risk': '#dc2626',
                     'medium_risk': '#ea580c',
-                    'safe': '#10b981'
+                    'safe': '#10b981',
+                    'no_alignment': '#6b7280',
                 }
                 if probe['status'] in color_map:
                     attributes.append(f"color={color_map[probe['status']]}")
                 desc_map = {
                     'high_risk': f"High risk: {probe['mismatches']} mismatch(es)" if probe['mismatches'] is not None else "High risk: Off-target alignment",
                     'medium_risk': f"Medium risk: {probe['mismatches']} mismatches" if probe['mismatches'] is not None else "Medium risk: Failed k-mer safety analysis",
-                    'safe': "Safe: No off-target alignments"
+                    'safe': "Safe: No off-target alignments",
+                    'no_alignment': "No alignment to source gene",
                 }
                 if probe['status'] in desc_map:
                     attributes.append(f"description={desc_map[probe['status']]}")
@@ -529,7 +549,7 @@ if __name__ == "__main__":
    
     result = generate_jbrowse_files(
         job_id="4f7850df-0503-48f8-9da7-6b2ca474695d",
-        output_dir="../outputs/alignments/4f7850df-0503-48f8-9da7-6b2ca474695d",
+        output_dir="../output/alignments/4f7850df-0503-48f8-9da7-6b2ca474695d",
         gene_sequences_dir="../gene_sequences",
         probe_sequences_dir="../probe_sequences",
         input_type="gene_sequence"

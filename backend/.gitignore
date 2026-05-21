@@ -67,7 +67,7 @@ Thumbs.db
 
 # Project specific
 results/
-outputs/
+output/
 data/gencode_data/
 *.fa
 *.sam

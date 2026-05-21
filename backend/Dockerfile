@@ -27,6 +27,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY core/ ./core/
 COPY backend/ ./backend/
+COPY config/ ./config/
 COPY probe_designer.py ./
 COPY build_kmer_dbs.py ./
 COPY bin/ ./bin/

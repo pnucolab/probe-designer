@@ -1,0 +1,175 @@
+# =============================================================================
+# SHARP-FISH organism registry
+# -----------------------------------------------------------------------------
+# Every host organism (and its associated microbiome catalogs) supported by
+# SHARP-FISH lives in this file. Adding a new host or microbiome catalog
+# requires only an entry here — no Python or Svelte code changes.
+#
+# Field reference:
+#   id                       : machine identifier (lowercase, no spaces)
+#   display_name             : human-readable label shown in the UI
+#   latin_binomial           : scientific name (used for header detection)
+#   ncbi_tax_id              : NCBI taxonomy ID (used by RefSeq lookup builder)
+#   default                  : (host only) true = pre-selected in the UI
+#   transcript_id_prefixes   : Ensembl ID prefixes used to recognize host
+#                              transcripts in SAM RNAMEs (e.g. ENST, ENSMUST)
+#   genome_dir               : directory holding the genome FASTA + GTF
+#   genome_file_regex        : regex (Python) to find the genome file inside
+#                              `genome_dir`; capture group 1 = release number
+#   transcript_chunks_dir    : directory holding split transcript chunks
+#                              that the pipeline aligns against
+#   reference_url              : reference URL shown in the UI
+#   microbiomes              : list of microbiome catalogs hostable on this
+#                              organism (each catalog has its own id, data
+#                              dir, display name, source URL)
+# =============================================================================
+
+hosts:
+  - id: human
+    display_name: Human
+    latin_binomial: Homo sapiens
+    ncbi_tax_id: 9606
+    default: true
+    transcript_id_prefixes: [ENST, ENSG]
+    genome_dir: data/gencode_data/human
+    genome_file_regex: 'GRCh38\.p14\.genome\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/gencode_data/human/transcript_chunks
+    reference_url: https://www.gencodegenes.org/human/
+    microbiomes:
+      - id: gut-microbe
+        display_name: Human Gut Microbiome
+        data_dir: data/gut-microbe
+        source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-gut-v2-0-2
+      - id: human-oral-microbiome
+        display_name: Human Oral Microbiome
+        data_dir: data/human-oral-microbiome
+        source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-oral-v1-0-1
+      - id: human-skin-microbiome
+        display_name: Human Skin Microbiome
+        data_dir: data/human-skin-microbiome
+        source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-skin-v1-0
+      - id: human-vaginal-microbiome
+        display_name: Human Vaginal Microbiome
+        data_dir: data/human-vaginal-microbiome
+        source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-vaginal-v1-0
+
+  - id: mouse
+    display_name: Mouse
+    latin_binomial: Mus musculus
+    ncbi_tax_id: 10090
+    transcript_id_prefixes: [ENSMUST, ENSMUSG]
+    genome_dir: data/gencode_data/mouse
+    genome_file_regex: 'GRCm39\.genome\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/gencode_data/mouse/transcript_chunks
+    reference_url: https://www.gencodegenes.org/mouse/
+    microbiomes:
+      - id: mouse-gut-microbiome
+        display_name: Mouse Gut Microbiome
+        data_dir: data/mouse-gut-microbiome
+        source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/mouse-gut-v1-0
+
+  - id: zebrafish
+    display_name: Zebrafish
+    latin_binomial: Danio rerio
+    ncbi_tax_id: 7955
+    transcript_id_prefixes: [ENSDART, ENSDARG]
+    genome_dir: data/ensembl_data/zebrafish
+    genome_file_regex: 'Danio_rerio\.GRCz11\.dna\.primary_assembly\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/zebrafish/transcript_chunks
+    reference_url: https://www.ensembl.org/Danio_rerio/Info/Index
+    microbiomes: []
+
+  - id: drosophila
+    display_name: Fruit Fly (Drosophila melanogaster)
+    latin_binomial: Drosophila melanogaster
+    ncbi_tax_id: 7227
+    transcript_id_prefixes: [FBtr, FBgn]
+    genome_dir: data/ensembl_data/drosophila
+    genome_file_regex: 'Drosophila_melanogaster\.BDGP6\.54\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/drosophila/transcript_chunks
+    reference_url: https://www.ensembl.org/Drosophila_melanogaster/Info/Index
+    microbiomes: []
+
+  - id: celegans
+    display_name: Nematode (Caenorhabditis elegans)
+    latin_binomial: Caenorhabditis elegans
+    ncbi_tax_id: 6239
+    # WormBase locus-style IDs (e.g. B0348.5a.1, cTel3X.2) — no fixed prefix.
+    # Detection falls back to the Latin binomial; source resolution still
+    # works via the GTF transcript→gene mappings.
+    transcript_id_prefixes: []
+    genome_dir: data/ensembl_data/celegans
+    genome_file_regex: 'Caenorhabditis_elegans\.WBcel235\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/celegans/transcript_chunks
+    reference_url: https://www.ensembl.org/Caenorhabditis_elegans/Info/Index
+    microbiomes: []
+
+  - id: xtropicalis
+    display_name: Tropical Clawed Frog (Xenopus tropicalis)
+    latin_binomial: Xenopus tropicalis
+    ncbi_tax_id: 8364
+    transcript_id_prefixes: [ENSXETT, ENSXETG]
+    genome_dir: data/ensembl_data/xtropicalis
+    genome_file_regex: 'Xenopus_tropicalis\.UCB_Xtro_10\.0\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/xtropicalis/transcript_chunks
+    reference_url: https://www.ensembl.org/Xenopus_tropicalis/Info/Index
+    microbiomes: []
+
+  - id: chicken
+    display_name: Chicken (Gallus gallus)
+    latin_binomial: Gallus gallus
+    ncbi_tax_id: 9031
+    transcript_id_prefixes: [ENSGALT, ENSGALG]
+    genome_dir: data/ensembl_data/chicken
+    genome_file_regex: 'Gallus_gallus\.bGalGal1\.mat\.broiler\.GRCg7b\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/chicken/transcript_chunks
+    reference_url: https://www.ensembl.org/Gallus_gallus/Info/Index
+    microbiomes: []
+
+  - id: pig
+    display_name: Pig (Sus scrofa)
+    latin_binomial: Sus scrofa
+    ncbi_tax_id: 9823
+    transcript_id_prefixes: [ENSSSCT, ENSSSCG]
+    genome_dir: data/ensembl_data/pig
+    genome_file_regex: 'Sus_scrofa\.Sscrofa11\.1\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/pig/transcript_chunks
+    reference_url: https://www.ensembl.org/Sus_scrofa/Info/Index
+    microbiomes: []
+
+  - id: arabidopsis
+    display_name: Thale Cress (Arabidopsis thaliana)
+    latin_binomial: Arabidopsis thaliana
+    ncbi_tax_id: 3702
+    # TAIR locus IDs — chromosomes 1–5 (AT[1-5]G), chloroplast (ATCG), mitochondrial (ATMG)
+    transcript_id_prefixes: [AT1G, AT2G, AT3G, AT4G, AT5G, ATCG, ATMG]
+    genome_dir: data/ensembl_data/arabidopsis
+    genome_file_regex: 'Arabidopsis_thaliana\.TAIR10\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/arabidopsis/transcript_chunks
+    reference_url: https://plants.ensembl.org/Arabidopsis_thaliana/
+    microbiomes: []
+
+  - id: maize
+    display_name: Maize (Zea mays)
+    latin_binomial: Zea mays
+    ncbi_tax_id: 4577
+    # B73 NAM 5.0 IDs use the prefix Zm00001eb (e.g. Zm00001eb000010_T001)
+    transcript_id_prefixes: [Zm00001eb]
+    genome_dir: data/ensembl_data/maize
+    genome_file_regex: 'Zea_mays\.Zm-B73-REFERENCE-NAM-5\.0\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/maize/transcript_chunks
+    reference_url: https://plants.ensembl.org/Zea_mays/
+    microbiomes: []
+
+  - id: soybean
+    display_name: Soybean (Glycine max)
+    latin_binomial: Glycine max
+    ncbi_tax_id: 3847
+    # Ensembl Plants reuses GenBank protein-style IDs for soybean transcripts:
+    # KRH* / KRG* (~90% of entries) plus ENSRNA* for ncRNAs (~1.4%).
+    transcript_id_prefixes: [KRH, KRG, ENSRNA]
+    genome_dir: data/ensembl_data/soybean
+    genome_file_regex: 'Glycine_max\.Glycine_max_v2\.1\.dna\.toplevel\.release_(\d+)\.fa'
+    transcript_chunks_dir: data/ensembl_data/soybean/transcript_chunks
+    reference_url: https://plants.ensembl.org/Glycine_max/
+    microbiomes: []

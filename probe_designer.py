@@ -36,8 +36,10 @@ from Bio.Seq import Seq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
 from score_probes import score_and_save_probes
 from scorer import ThermodynamicProbeScorer
-from probe_classifier import classify_probes_from_sam, infer_source_transcripts
+from probe_classifier import classify_probes_from_sam, infer_source_transcripts, resolve_source_from_header
+from host_internal_filter import filter_probes_by_self_alignment
 from smart_kmer_filter import smart_kmer_filter
+from backend.sam_parser import compute_edit_distance
 
 
 def get_local_release_number(filename_pattern, local_dir):
@@ -61,33 +63,44 @@ def get_local_release_number(filename_pattern, local_dir):
 
 
 def validate_local_gencode(species, base_dir=None):
-    """Locate and validate pre-existing local Gencode data (genome, chunks)."""
+    """Locate and validate pre-existing local host data (genome + chunks).
+
+    All host-specific paths and genome file patterns are read from
+    config/organisms.yml via the organism registry — no per-host
+    hard-coded paths or regex live here.
+    """
+    from organism_registry import get_host
+    host = get_host(species)
+    if host is None:
+        print(f"Error: Unknown host '{species}'. Add an entry to config/organisms.yml.")
+        return False
     if base_dir is None:
         base_dir = os.path.dirname(os.path.abspath(__file__))
-    species_data_dir = os.path.join(base_dir, 'data', 'gencode_data', species)
-    if species == "human":
-        genome_pattern = r'GRCh38\.p14\.genome\.release_(\d+)\.fa'
-    else:
-        genome_pattern = r'GRCm39\.genome\.release_(\d+)\.fa'
-    local_release = get_local_release_number(genome_pattern, species_data_dir)
+    species_data_dir = (host.genome_dir if os.path.isabs(host.genome_dir)
+                        else os.path.join(base_dir, host.genome_dir))
+    chunk_dir = (host.transcript_chunks_dir if os.path.isabs(host.transcript_chunks_dir)
+                 else os.path.join(base_dir, host.transcript_chunks_dir))
+    local_release = get_local_release_number(host.genome_file_regex, species_data_dir)
     if not local_release:
-        print(f"Error: No local genome file found for {species} in {species_data_dir}")
+        print(f"Error: No genome file matching '{host.genome_file_regex}' in {species_data_dir}")
         return False
-    if species == "human":
-        genome_file = f"{species_data_dir}/GRCh38.p14.genome.release_{local_release}.fa"
-    else:
-        genome_file = f"{species_data_dir}/GRCm39.genome.release_{local_release}.fa"
-    chunk_dir = f"{species_data_dir}/transcript_chunks"
-    if not os.path.exists(genome_file):
-        print(f"Error: Genome file not found: {genome_file}")
+    pat = re.compile(host.genome_file_regex)
+    genome_file = None
+    if os.path.isdir(species_data_dir):
+        for fn in os.listdir(species_data_dir):
+            m = pat.match(fn)
+            if m and int(m.group(1)) == local_release:
+                genome_file = os.path.join(species_data_dir, fn)
+                break
+    if not genome_file or not os.path.exists(genome_file):
+        print(f"Error: Genome file for release {local_release} not found in {species_data_dir}")
         return False
     if not os.path.exists(chunk_dir):
         print(f"Error: Transcript chunks directory not found: {chunk_dir}")
         return False
-    existing_chunks = [f for f in os.listdir(chunk_dir)
-                      if f.endswith('.fa') and f'release_{local_release}' in f]
+    existing_chunks = [f for f in os.listdir(chunk_dir) if f.endswith('.fa')]
     if not existing_chunks:
-        print(f"Error: No chunk files found for release_{local_release} in {chunk_dir}")
+        print(f"Error: No chunk .fa files in {chunk_dir}")
         return False
     print(f"Using local {species} data (release_{local_release}): {len(existing_chunks)} chunk files")
     return True
@@ -104,15 +117,29 @@ class samannotator:
         self.mappings = {}
         
     def _find_gtf_file(self, species):
-        """Find GTF file for species and extract release number."""
-        species_dir = self.gtf_dir / species
+        """Find GTF file for species and extract release number.
+
+        The GTF directory is taken from the organism registry
+        (config/organisms.yml → host.genome_dir). Falls back to the
+        legacy `data/gencode_data/<species>/` layout if the host
+        isn't in the registry (keeps microbiome catalogs working).
+        """
+        try:
+            from organism_registry import get_host
+            host = get_host(species)
+            species_dir = Path(host.genome_dir) if host else (self.gtf_dir / species)
+        except Exception:
+            species_dir = self.gtf_dir / species
         if not species_dir.exists():
             return None, None
-        
-        for file in species_dir.glob('*.gtf'):
-            match = re.search(r'release_(\d+)', file.name)
-            release = int(match.group(1)) if match else None
-            return file, release
+
+        # Accept both GTF (Ensembl vertebrates) and GFF3 (Ensembl Plants,
+        # some non-vertebrate genomes). Prefer GTF if both exist.
+        for pattern in ('*.gtf', '*.gff3', '*.gff'):
+            for file in species_dir.glob(pattern):
+                match = re.search(r'release_(\d+)', file.name)
+                release = int(match.group(1)) if match else None
+                return file, release
         return None, None
     
     def _get_cache_file(self, species):
@@ -153,24 +180,75 @@ class samannotator:
         return True
     
     def _extract_from_gtf(self, gtf_file, release, cache_file):
-        """Extract mappings from GTF file (comprehensive but slower)."""
-        print(f"Extracting transcript→gene mappings from GTF (release_{release})...")
+        """Extract transcript→gene mappings from GTF or GFF3.
+
+        GTF format (Ensembl vertebrates):
+            ... transcript_id "X"; gene_name "Y"; ...
+        GFF3 format (Ensembl Plants, some non-vertebrate genomes):
+            ... ID=transcript:X;Parent=gene:Y;Name=Z;...
+        Both are handled here so a single attribute file (whatever Ensembl
+        ships for the organism) is enough.
+        """
+        is_gff3 = str(gtf_file).lower().endswith(('.gff3', '.gff'))
+        fmt = 'GFF3' if is_gff3 else 'GTF'
+        print(f"Extracting transcript→gene mappings from {fmt} (release_{release})...")
         start = time.time()
-        
-        transcript_pattern = re.compile(r'transcript_id "([^"]+)"')
-        gene_pattern = re.compile(r'gene_name "([^"]+)"')
-        
-        with open(gtf_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.startswith('#'):
-                    continue
-                
-                if 'transcript_id' in line and 'gene_name' in line:
-                    t_match = transcript_pattern.search(line)
-                    g_match = gene_pattern.search(line)
-                    
-                    if t_match and g_match:
-                        self.mappings[t_match.group(1)] = g_match.group(1)
+
+        if not is_gff3:
+            transcript_pattern = re.compile(r'transcript_id "([^"]+)"')
+            gene_pattern = re.compile(r'gene_name "([^"]+)"')
+            with open(gtf_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('#'):
+                        continue
+                    if 'transcript_id' in line and 'gene_name' in line:
+                        t_match = transcript_pattern.search(line)
+                        g_match = gene_pattern.search(line)
+                        if t_match and g_match:
+                            self.mappings[t_match.group(1)] = g_match.group(1)
+        else:
+            # GFF3 — collect on transcript-feature rows
+            #   ID=transcript:X        → transcript id (strip 'transcript:' prefix)
+            #   Parent=gene:Y          → fallback gene id
+            #   Name=Z                 → preferred gene name when present
+            t_id_re = re.compile(r'(?:^|;)ID=(?:transcript:)?([^;]+)')
+            t_parent_re = re.compile(r'(?:^|;)Parent=(?:gene:)?([^;]+)')
+            t_name_re = re.compile(r'(?:^|;)Name=([^;]+)')
+            # Standard transcript feature types in GFF3
+            transcript_types = {
+                'mRNA', 'transcript', 'ncRNA', 'rRNA', 'tRNA', 'snRNA',
+                'snoRNA', 'miRNA', 'lnc_RNA', 'pseudogenic_transcript',
+            }
+            # Build gene_id → gene_name map first
+            gene_names = {}
+            with open(gtf_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) < 9 or parts[2] != 'gene':
+                        continue
+                    attrs = parts[8]
+                    g_match = re.search(r'(?:^|;)ID=(?:gene:)?([^;]+)', attrs)
+                    n_match = t_name_re.search(attrs)
+                    if g_match:
+                        gid = g_match.group(1)
+                        gene_names[gid] = n_match.group(1) if n_match else gid
+            # Now pull transcript→gene mappings
+            with open(gtf_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    if line.startswith('#') or not line.strip():
+                        continue
+                    parts = line.split('\t')
+                    if len(parts) < 9 or parts[2] not in transcript_types:
+                        continue
+                    attrs = parts[8]
+                    t_match = t_id_re.search(attrs)
+                    p_match = t_parent_re.search(attrs)
+                    if t_match and p_match:
+                        tid = t_match.group(1)
+                        gid = p_match.group(1)
+                        self.mappings[tid] = gene_names.get(gid, gid)
         
         elapsed = time.time() - start
         print(f"Extracted {len(self.mappings):,} mappings in {elapsed:.2f}s")
@@ -392,10 +470,13 @@ def annotate_microbiome_sam(sam_file, species, _, align_host=False):
     try:
         transcript_to_gene = {}
         if align_host:
-            host_species = 'human' if species in ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome'] else 'mouse'
-            ann = samannotator()
-            ann._ensure_mappings_loaded(host_species)
-            transcript_to_gene = ann.mappings
+            from organism_registry import host_for_microbiome
+            host_obj = host_for_microbiome(species)
+            host_species = host_obj.id if host_obj else None
+            if host_species:
+                ann = samannotator()
+                ann._ensure_mappings_loaded(host_species)
+                transcript_to_gene = ann.mappings
 
         with open(sam_file, 'r', encoding='utf-8') as inf, \
             open(annotated_sam, 'w', encoding='utf-8') as outf:
@@ -435,10 +516,8 @@ def generate_14mers(sequence, k=14):
 def get_jellyfish_db(genome_files, k, species, threads=1):
     """Get or build a Jellyfish k-mer count database for a species.
     Database is cached in the species data directory for reuse across runs.
-    Uses -L 2 to only store k-mers appearing 2+ times, reducing DB size.
     """
     jellyfish = 'jellyfish'
-    # Cache DB alongside genome data for reuse
     species_dir = os.path.dirname(genome_files[0])
     db_path = os.path.join(species_dir, f'kmer_{k}mer_counts.jf')
 
@@ -448,7 +527,7 @@ def get_jellyfish_db(genome_files, k, species, threads=1):
 
     print(f"  Building Jellyfish database (one-time, will be cached for future runs)...")
     file_list = ' '.join(f"'{f}'" for f in genome_files)
-    cmd = f"cat {file_list} | {jellyfish} count -m {k} -s 5G -t {threads} -L 2 -C -o '{db_path}' /dev/fd/0"
+    cmd = f"cat {file_list} | {jellyfish} count -m {k} -s 5G -t {threads} -C -o '{db_path}' /dev/fd/0"
     proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         print(f"Warning: Jellyfish count failed: {proc.stderr}")
@@ -504,23 +583,38 @@ def count_source_kmers(source_sequences, k):
 
 
 def find_source_genome_sequences(chrom_files, source_transcripts):
-    """Find all sequences from the source genome in the database chunk files.
-    E.g., if source transcript is MGYG000000001_1, find all MGYG000000001_* contigs."""
+    """Find all sequences from the source in the database chunk files.
+
+    Microbiome (MGYG-style, e.g. `MGYG000000001_1`): match every contig whose
+    ID starts with the genome prefix (`MGYG000000001_*`).
+    Host (ENST/ENSMUST, e.g. `ENST00000275493.7`): exact-match the transcript
+    ID, version-tolerant — so all isoforms of the source gene contribute their
+    k-mers to the self-exclusion set.
+    """
     source_prefixes = set()
+    source_ids = set()
+    source_ids_versionless = set()
     for tid in source_transcripts:
         parts = tid.rsplit('_', 1)
         if len(parts) == 2 and parts[1].isdigit():
             source_prefixes.add(parts[0] + '_')
+        else:
+            source_ids.add(tid)
+            source_ids_versionless.add(tid.split('.', 1)[0])
 
     source_seqs = []
     for chrom_file in chrom_files:
         for rec in SeqIO.parse(chrom_file, "fasta"):
-            if any(rec.id.startswith(prefix) for prefix in source_prefixes):
+            rid = rec.id
+            if source_prefixes and any(rid.startswith(p) for p in source_prefixes):
+                source_seqs.append(str(rec.seq))
+                continue
+            if rid in source_ids or rid.split('.', 1)[0] in source_ids_versionless:
                 source_seqs.append(str(rec.seq))
     return source_seqs
 
 
-def check_14mer_safety(probes_file, species, output_base, args, source_transcripts=None, input_fasta=None):
+def check_14mer_safety(probes_file, species, output_base, args, source_transcripts=None):
     """Check if k-mers from on-target probes have off-target genome matches using Jellyfish."""
     k = args.kmer_length
     print(f"\nChecking {k}-mer safety for on-target probes...")
@@ -540,28 +634,26 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     print(f"Generated {len(unique_kmers)} unique k-mers from {len(probes)} probes")
     print(f"  Total k-mers: {total_mers}, Unique: {len(unique_kmers)}, Duplicates removed: {total_mers - len(unique_kmers)} ({(total_mers-len(unique_kmers))/total_mers*100:.1f}%)")
 
-    microbiome_species_list = ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome",
-                            "human-vaginal-microbiome", "mouse-gut-microbiome"]
+    from organism_registry import load_registry as _load_reg_kmer
+    _reg = _load_reg_kmer()
 
     chrom_files = []
 
-    if species in microbiome_species_list:
+    if _reg.is_microbiome_species(species):
+        host_obj, mb_obj = _reg.get_microbiome(species)
         if args.align_microbiome:
-            microbiome_dir = os.path.join('data', species)
+            microbiome_dir = mb_obj.data_dir
             if os.path.exists(microbiome_dir):
                 chrom_files = [os.path.join(microbiome_dir, f) for f in os.listdir(microbiome_dir)
                             if f.endswith('.fa') or f.endswith('.fna')]
         elif args.align_host:
-            if species == "mouse-gut-microbiome":
-                host_dir = os.path.join('data', 'gencode_data', 'mouse', 'transcript_chunks')
-            else:
-                host_dir = os.path.join('data', 'gencode_data', 'human', 'transcript_chunks')
-
+            host_dir = host_obj.transcript_chunks_dir
             if os.path.exists(host_dir):
                 chrom_files = [os.path.join(host_dir, f) for f in os.listdir(host_dir) if f.endswith('.fa')]
     else:
-        chrom_dir = os.path.join('data', 'gencode_data', species, 'transcript_chunks')
-        if os.path.exists(chrom_dir):
+        host_obj = _reg.get_host(species)
+        chrom_dir = host_obj.transcript_chunks_dir if host_obj else None
+        if chrom_dir and os.path.exists(chrom_dir):
             chrom_files = [os.path.join(chrom_dir, f) for f in os.listdir(chrom_dir) if f.endswith('.fa')]
 
     if not chrom_files:
@@ -594,15 +686,14 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     query_elapsed = time.time() - query_start
     print(f"  Queried {len(genome_counts)} k-mers in {query_elapsed:.2f}s")
 
-    # Count k-mer occurrences in source genome for self-match exclusion
-    # Use full source genome from database (all contigs), not just the input fragment
+    # Count k-mer occurrences in source genome for self-match exclusion.
+    # Only subtract when the source is identified in the database; falling back
+    # to the pasted input cancels real off-target hits when the input is not
+    # itself in the database (e.g., cross-species probe design).
     source_counts = {}
     source_seqs = []
     if source_transcripts and chrom_files:
         source_seqs = find_source_genome_sequences(chrom_files, source_transcripts)
-
-    if not source_seqs and input_fasta and os.path.exists(input_fasta):
-        source_seqs = [str(rec.seq) for rec in SeqIO.parse(input_fasta, "fasta")]
 
     if source_seqs:
         source_counts = count_source_kmers(source_seqs, k)
@@ -656,14 +747,6 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
                 f.write(f"{probe_id}:\n")
                 f.write(f"  Total off-target k-mer matches: {d['total_matches']}\n\n")
 
-        f.write("\n" + "=" * 80 + "\n")
-        f.write("SAFE PROBES\n")
-        f.write("=" * 80 + "\n\n")
-
-        for probe_id in sorted(safe_probes_ids):
-            f.write(f"{probe_id}:\n")
-            f.write(f"  Off-target k-mer matches: 0\n\n")
-
     report_elapsed = time.time() - report_start
     print(f"Report generation took {report_elapsed:.2f}s")
 
@@ -672,16 +755,15 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
 
     # Secondary host check for microbiome species
     host_species = None
-    if species in microbiome_species_list and args.align_microbiome and args.align_host:
-        if species == "mouse-gut-microbiome":
-            host_species = "mouse"
-        else:
-            host_species = "human"
-
-        print(f"\nSecondary safety check: Checking safe probe k-mers against {host_species} transcripts...")
+    host_chrom_dir = None
+    if _reg.is_microbiome_species(species) and args.align_microbiome and args.align_host:
+        _host_obj, _ = _reg.get_microbiome(species)
+        if _host_obj:
+            host_species = _host_obj.id
+            host_chrom_dir = _host_obj.transcript_chunks_dir
+            print(f"\nSecondary safety check: Checking safe probe k-mers against {host_species} transcripts...")
 
     if host_species:
-        host_chrom_dir = os.path.join('data', 'gencode_data', host_species, 'transcript_chunks')
         if os.path.exists(host_chrom_dir):
             host_chrom_files = [os.path.join(host_chrom_dir, f) for f in os.listdir(host_chrom_dir) if f.endswith('.fa')]
 
@@ -739,7 +821,7 @@ def check_14mer_safety(probes_file, species, output_base, args, source_transcrip
     os.remove(temp_kmer_file)
 
     return safe_probes_file
-    
+
 
 def main():
     """Main pipeline logic."""
@@ -766,6 +848,12 @@ def main():
                     help="Align against host transcriptome")
     parser.add_argument("--tm-range", type=str, default="42-47",
                     help="Tm filter range in °C, e.g. 42-47 (default: 42-47)")
+    parser.add_argument("--gc-range", type=str, default="40-80",
+                    help="GC content filter range in percent, e.g. 40-80 (default: 40-80)")
+    parser.add_argument("--host-internal-mode", action="store_true", default=False,
+                    help="Host-internal design: keep only probes whose every alignment is to the source transcript (rejects non-aligned and cross-transcript-aligned probes)")
+    parser.add_argument("--microbe-mode", action="store_true", default=False,
+                    help="Microbial probe design: treat input as microbial regardless of header. Skip source inference for host targets so every host alignment counts as off-target.")
 
     args = parser.parse_args()
     if args.probe_length < 20 or args.probe_length > 50:
@@ -833,30 +921,37 @@ def main():
             if len(seq) != args.probe_length:
                 print(f"Probe length mismatch: {header} has {len(seq)} bp, expected {args.probe_length} bp")
                 return False
-    if args.species in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"]:
+    from organism_registry import load_registry as _load_reg
+    _registry = _load_reg()
+    if _registry.is_microbiome_species(args.species):
         genome = None
         print(f"Using pre-existing {args.species} data")
     else:
+        _host = _registry.get_host(args.species)
+        if _host is None:
+            print(f"Unknown species '{args.species}'. Add it to config/organisms.yml.")
+            return False
         print(f"\nValidating genome for {args.species}...")
-        species_data_dir = os.path.join('data', 'gencode_data', args.species)
+        species_data_dir = _host.genome_dir
         try:
             success = validate_local_gencode(args.species, base_dir='.')
 
             if not success:
-                print("Genome validation failed. Ensure Gencode files are in: " + species_data_dir)
+                print(f"Genome validation failed. Ensure files are in: {species_data_dir}")
                 return False
 
             local_genome_release = get_local_release_number(
-                r'GRCh38\.p14\.genome\.release_(\d+)\.fa' if args.species == "human" else r'GRCm39\.genome\.release_(\d+)\.fa', species_data_dir
+                _host.genome_file_regex, species_data_dir
             )
-
-            if args.species == "human":
-                genome_file = os.path.join(species_data_dir, f'GRCh38.p14.genome.release_{local_genome_release}.fa')
-            else:  # mouse
-                genome_file = os.path.join(species_data_dir, f'GRCm39.genome.release_{local_genome_release}.fa')
-
-            if not os.path.exists(genome_file):
-                print(f"Genome file not found: {genome_file}")
+            pat = re.compile(_host.genome_file_regex)
+            genome_file = None
+            for fn in os.listdir(species_data_dir):
+                m = pat.match(fn)
+                if m and int(m.group(1)) == local_genome_release:
+                    genome_file = os.path.join(species_data_dir, fn)
+                    break
+            if not genome_file or not os.path.exists(genome_file):
+                print(f"Genome file for release {local_genome_release} not found in {species_data_dir}")
                 return False
 
             genome = genome_file
@@ -872,9 +967,9 @@ def main():
         annotator._ensure_mappings_loaded(args.species)
 
     if args.task_id:
-        output_base = f'outputs/alignments/{args.task_id}'
+        output_base = f'output/alignments/{args.task_id}'
     else:
-        output_base = 'outputs'
+        output_base = 'output'
     os.makedirs(output_base, exist_ok=True)
 
     probes_out = f'{output_base}/candidate_probes.fa'
@@ -883,38 +978,44 @@ def main():
     annotated_sam = f'{output_base}/filtered_probe_alignments_annotated.sam'
     align_dir = f'{output_base}/chroms'
 
-    if args.species in ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome", "human-vaginal-microbiome", "mouse-gut-microbiome"]:
-        microbiome_dir = os.path.join('data', args.species)
-        if args.species == "mouse-gut-microbiome":
-            host_dir = os.path.join('data', 'gencode_data', 'mouse', 'transcript_chunks')
-        else:
-            host_dir = os.path.join('data', 'gencode_data', 'human', 'transcript_chunks')
+    if _registry.is_microbiome_species(args.species):
+        _mb_host, _mb = _registry.get_microbiome(args.species)
+        microbiome_dir = _mb.data_dir
+        host_dir = _mb_host.transcript_chunks_dir
         dirs = []
         if args.align_microbiome:
             dirs.append(microbiome_dir)
         if args.align_host and os.path.exists(host_dir):
             dirs.append(host_dir)
-        
+
         if not dirs:
             print("Error: At least one alignment target must be selected for microbiome species")
             return False
-        
+
         chrom_dir = ':'.join(dirs)
     else:
-        chrom_dir = os.path.join('data', 'gencode_data', args.species, 'transcript_chunks')
+        chrom_dir = _host.transcript_chunks_dir
 
     os.makedirs(align_dir, exist_ok=True)
+
+    gc_parts = args.gc_range.split('-')
+    if len(gc_parts) == 1:
+        gc_min = gc_max = float(gc_parts[0])
+    else:
+        gc_min, gc_max = float(gc_parts[0]), float(gc_parts[1])
+    gc_min = max(0.0, gc_min)
+    gc_max = min(100.0, gc_max)
 
     if skip_probe_generation:
         print("\nSkipping probe generation - using provided probes")
 
-        total, passing = count_and_filter_gc(input_fasta, min_gc=40, max_gc=80)
+        total, passing = count_and_filter_gc(input_fasta, min_gc=gc_min, max_gc=gc_max)
 
         SeqIO.write(passing, probes_out, "fasta")
 
         print(f"Input probes: {total}")
-        print(f"Found {len(passing)} candidate probes passing GC filter (40-80%, length={args.probe_length}).")
-        
+        print(f"Found {len(passing)} candidate probes passing GC filter ({gc_min:g}-{gc_max:g}%, length={args.probe_length}).")
+
         if len(passing) == 0:
             print("No probes passed GC filter")
             return False
@@ -924,6 +1025,8 @@ def main():
             sys.executable, os.path.join('core', 'generate_probes.py'),
             '--probe-length', str(args.probe_length),
             '--max-mismatches', str(args.max_mismatches),
+            '--min-gc', str(gc_min),
+            '--max-gc', str(gc_max),
             '--input', input_fasta,
             '--output', probes_out
         ]
@@ -991,7 +1094,7 @@ def main():
     def align_chrom(chrom_fasta):
         base = os.path.splitext(os.path.basename(chrom_fasta))[0]
         out_sam = os.path.join(align_dir, f'{base}.sam')
-        cmd = [razers, '-ng', '-i', str(identity_percent), '-rr', '100', '-m', '100','-tc', '1', '-o', out_sam, chrom_fasta, probes_out]
+        cmd = [razers, '-i', str(identity_percent), '-rr', '100', '-m', '100','-tc', '1', '-o', out_sam, chrom_fasta, probes_out]
         start = time.time()
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         elapsed = time.time() - start
@@ -1056,13 +1159,27 @@ def main():
 
     print(f"Merged SAM written to {sam_out} ({len(seen):,} alignments)")
 
-    print(f"\nFiltering merged SAM -> keeping alignments with NM <= {args.max_mismatches}")
-    nm_pattern = re.compile(r'NM:i:(\d+)')
+    print(f"\nFiltering merged SAM -> keeping alignments with edit distance <= {args.max_mismatches}")
+    md_pattern = re.compile(r'MD:Z:(\S+)')
     total = 0
     kept = 0
     skipped_no_nm = 0
     aligned_probes = set()
+    filter_seen = set()
     non_aligned_probes_fa = f'{output_base}/non_aligned_probes.fa'
+
+    # Cross-reactivity guard: when the input is a microbe gene/transcript and
+    # the user enabled --align-host, any host alignment makes the probe unsafe
+    # for in-situ use. Track those probes here and reject them later, regardless
+    # of mismatch count or whether they also hit the microbe target.
+    strict_host_reject = _registry.is_microbiome_species(args.species) and args.align_host
+    # Collect every Ensembl-style host transcript prefix declared in
+    # config/organisms.yml so we recognize ENST/ENSMUST/ENSDART/etc. without
+    # hard-coding.
+    _all_host_prefixes = tuple(
+        p for h in _registry.hosts for p in h.transcript_id_prefixes
+    )
+    host_aligned_probes = set()
 
     with open(sam_out, 'r', encoding='utf-8') as inf, \
         open(filtered_sam, 'w', encoding='utf-8') as outf:
@@ -1077,30 +1194,45 @@ def main():
 
             qname = parts[0]
             aligned_probes.add(qname)
+            if strict_host_reject:
+                rname = parts[2]
+                if _all_host_prefixes and rname.split('.', 1)[0].startswith(_all_host_prefixes):
+                    host_aligned_probes.add(qname)
 
-            m = nm_pattern.search(line)
-            if not m:
+            md_match = md_pattern.search(line)
+            if not md_match:
                 skipped_no_nm += 1
                 continue
-            nm = int(m.group(1))
+            cigar = parts[5]
+            nm = compute_edit_distance(cigar, md_match.group(1))
 
             if nm <= args.max_mismatches:
+                # Dedupe by (qname, rname, pos, strand): aligners can emit
+                # both a primary and a secondary record for the same hit,
+                # which would otherwise show up as duplicate rows downstream.
+                try:
+                    flag = int(parts[1])
+                except ValueError:
+                    flag = 0
+                strand = '-' if (flag & 0x10) else '+'
+                dedup_key = (qname, parts[2], parts[3], strand)
+                if dedup_key in filter_seen:
+                    continue
+                filter_seen.add(dedup_key)
                 outf.write(line)
                 kept += 1
     
-    microbiome_species = ["gut-microbe", "human-oral-microbiome", "human-skin-microbiome",
-                      "human-vaginal-microbiome", "mouse-gut-microbiome"]
-    
-    if args.species in microbiome_species:
+    if _registry.is_microbiome_species(args.species):
         annotate_microbiome_sam(filtered_sam, args.species, output_base, args.align_host)
 
     print("\nExtracting non-aligned probes...")
     non_aligned_count = 0
     candidate_probes = list(SeqIO.parse(probes_out, "fasta"))
 
-    is_microbiome = args.species in microbiome_species
+    is_microbiome = _registry.is_microbiome_species(args.species)
     if is_microbiome and args.align_host:
-        host_species = 'human' if args.species in ['gut-microbe', 'human-oral-microbiome', 'human-skin-microbiome', 'human-vaginal-microbiome'] else 'mouse'
+        _h = _registry.host_for_microbiome(args.species)
+        host_species = _h.id if _h else None
         
         temp_sam = filtered_sam.replace('filtered_probe_alignments.sam', 'filtered_probe_alignments_temp.sam')
         annotator.annotate_sam(annotated_sam, temp_sam, host_species)
@@ -1111,24 +1243,89 @@ def main():
 
     sam_to_analyze = annotated_sam if os.path.exists(annotated_sam) else filtered_sam
 
-    # Infer source transcripts from alignment patterns.
-    # Skip for pasted-probe input: the probe's true source is unknown, so any
-    # alignment must be treated as off-target rather than inferred as self.
+    # Determine source transcripts.
+    # - Probe input mode: skipped (every alignment is off-target).
+    # - Host (human/mouse) gene input: source is read from the user's FASTA
+    #   header (first token, must match a transcript ID or gene symbol in the
+    #   transcriptome catalog). If the token doesn't resolve, skip inference
+    #   entirely so every alignment is treated as off-target.
+    # - Microbiome gene input: keep the existing alignment-pattern inference.
     gene_mappings = annotator.mappings if annotator and annotator.mappings else None
-    if scenario == "probe_sequence":
+    if scenario == "probe_sequence" and not args.host_internal_mode:
         print("\nSkipping source inference (probe input mode): all alignments treated as off-target")
         source_transcripts = set()
         source_gene = None
+    elif args.microbe_mode and not is_microbiome:
+        # Microbial design mode against a host target: the user wants to flag
+        # any host alignment, so skip source inference and treat every hit as
+        # off-target (no isoform self-exclusion).
+        print("\nMicrobe mode: skipping source inference; all host alignments treated as off-target")
+        source_transcripts = set()
+        source_gene = None
+    elif not is_microbiome:
+        # Probe input + host-internal mode: every probe header carries the
+        # source ID (e.g. NM_005228.5). Resolving from the first record is
+        # enough since all probes share the same source.
+        header = sequences[0][0] if sequences else ''
+        source_info = resolve_source_from_header(header, gene_mappings)
+        source_transcripts = source_info['source_transcripts']
+        source_gene = source_info['source_gene']
     else:
         source_info = infer_source_transcripts(filtered_sam, gene_mappings=gene_mappings, is_microbiome=is_microbiome)
         source_transcripts = source_info['source_transcripts']
         source_gene = source_info['source_gene']
 
-    probe_classifications = classify_probes_from_sam(
-        sam_to_analyze, is_microbiome=is_microbiome,
-        source_transcripts=source_transcripts, source_gene=source_gene,
-        is_probe_input=(scenario == "probe_sequence")
-    )
+    if args.host_internal_mode:
+        safe_ids, _details = filter_probes_by_self_alignment(
+            sam_to_analyze, source_transcripts, source_gene,
+            gene_mappings=gene_mappings,
+        )
+        probe_classifications = {pid: {'status': 'safe'} for pid in safe_ids}
+        print(f"Host-internal filter: {len(safe_ids)} probes align only to source")
+
+        # If header-based source resolution returned nothing (e.g. unrecognized
+        # FASTA header in Host Probe Design mode), derive source_transcripts
+        # and source_gene from the alignments of the probes the filter just
+        # accepted. They all hit a single gene by construction, so the union
+        # of their aligned RNAMEs is the source-gene's isoform set — exactly
+        # what `find_source_genome_sequences` needs for k-mer self-exclusion.
+        if not source_transcripts and safe_ids:
+            inferred_transcripts = set()
+            inferred_genes = set()
+            for pid in safe_ids:
+                d = _details.get(pid) or {}
+                inferred_transcripts.update(d.get('aligned_to', []))
+                inferred_genes.update(d.get('genes', []))
+            source_transcripts = inferred_transcripts
+            if not source_gene and len(inferred_genes) == 1:
+                source_gene = next(iter(inferred_genes))
+            print(f"Host-internal filter: inferred source from safe probes: "
+                  f"{source_gene or '(no single gene)'} "
+                  f"({len(source_transcripts)} transcript(s))")
+    else:
+        probe_classifications = classify_probes_from_sam(
+            sam_to_analyze, is_microbiome=is_microbiome,
+            source_transcripts=source_transcripts, source_gene=source_gene,
+            is_probe_input=(scenario == "probe_sequence")
+        )
+
+    # Persist the source decision so downstream consumers (e.g. jbrowse_generator
+    # and the off-target endpoints) don't re-run inference and disagree with the
+    # pipeline. Written *after* the host-internal block so any source inferred
+    # from the safe probes' alignments is captured.
+    try:
+        import json as _json
+        with open(f'{output_base}/source_info.json', 'w', encoding='utf-8') as _sf:
+            _json.dump({
+                'source_gene': source_gene,
+                'source_transcripts': sorted(source_transcripts),
+                'is_microbiome': bool(is_microbiome),
+                'scenario': scenario,
+                'host_internal_mode': bool(args.host_internal_mode),
+            }, _sf)
+    except OSError:
+        pass
+
     # Count self-aligning vs off-target probes
     self_aligning_probes = sum(1 for p_id, data in probe_classifications.items() if data['status'] == 'safe')
     off_target_probes = len(aligned_probes) - self_aligning_probes
@@ -1139,19 +1336,34 @@ def main():
     print("\nExtracting probes...")
     self_aligned_safe_count = 0
 
+    host_rejected_count = 0
     with open(non_aligned_probes_fa, 'w', encoding='utf-8') as out:
         for record in candidate_probes:
             probe_id = record.id
+            # Microbe-input + --align-host: any host hit is cross-reactivity.
+            # Reject regardless of microbe-on-target status; keep only probes
+            # with no host alignment at all.
+            if strict_host_reject and probe_id in host_aligned_probes:
+                host_rejected_count += 1
+                continue
             if probe_id not in probe_classifications:
+                if args.host_internal_mode:
+                    continue
                 SeqIO.write(record, out, "fasta")
                 non_aligned_count += 1
             elif probe_classifications[probe_id]['status'] == 'safe':
+                # Self-alignment is only meaningful for microbe-genome selection:
+                # input is a microbe gene, so "self" = microbe source transcript.
+                # In host-only mode the inferred source is a host transcript and
+                # any "self" hit is real cross-reactivity, so don't keep it.
+                if strict_host_reject and not args.align_microbiome:
+                    continue
                 SeqIO.write(record, out, "fasta")
                 self_aligned_safe_count += 1
 
     print("\nFiltering summary:")
     print(f"Total alignments scanned: {total:,}")
-    print(f"Kept in filtered (NM<={args.max_mismatches}): {kept:,}")
+    print(f"Kept in filtered (edit distance <= {args.max_mismatches}): {kept:,}")
     print(f"Total candidate probes: {len(candidate_probes):,}")
     print(f"Aligned probes found: {len(aligned_probes):,}")
     print(f"  - Self-alignments only (safe): {self_aligning_probes:,}")
@@ -1160,7 +1372,9 @@ def main():
         print(f"  - Inferred source gene: {source_gene}")
     print(f"Self-aligned safe probes: {self_aligned_safe_count:,}")
     print(f"Non-aligned probes: {non_aligned_count:,}")
-    print(f"Skipped (no NM tag): {skipped_no_nm:,}")
+    if strict_host_reject:
+        print(f"Rejected for host cross-reactivity: {host_rejected_count:,}")
+    print(f"Skipped (no MD tag): {skipped_no_nm:,}")
 
     total_on_target = self_aligned_safe_count + non_aligned_count
     safe_probes_file = f'{output_base}/safe_probes.fa'
@@ -1172,7 +1386,6 @@ def main():
         kmer_result_file = check_14mer_safety(
             non_aligned_probes_fa, args.species, output_base, args,
             source_transcripts=source_transcripts,
-            input_fasta=input_fasta
         )
         total_safe_count = len(list(SeqIO.parse(kmer_result_file, 'fasta')))
     else:

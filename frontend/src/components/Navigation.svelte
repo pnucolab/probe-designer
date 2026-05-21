@@ -3,13 +3,14 @@
   
   export let currentView = 'home';
   export let hasJob = false;
-  
+  export let activeMode = '';
+
   const dispatch = createEventDispatcher();
-  
+
   let mobileMenuOpen = false;
-  
-  function navigate(view) {
-    dispatch('navigate', { view });
+
+  function navigate(view, mode) {
+    dispatch('navigate', mode ? { view, mode } : { view });
     mobileMenuOpen = false;
   }
   
@@ -22,31 +23,49 @@
   <div class="nav-desktop">
     <button
       on:click={() => navigate('home')}
-      class="nav-button"
-      class:active={currentView === 'home'}
+      class="nav-brand"
+      aria-label="SHARP-FISH home"
     >
-     Home
+      SHARP-FISH
     </button>
-    
+
     <div class="nav-right">
       <button
-        on:click={() => navigate('upload')}
+        on:click={() => navigate('home')}
         class="nav-button"
-        class:active={currentView === 'upload'}
+        class:active={currentView === 'home'}
       >
-       Design Probes
+       Home
       </button>
-      
+
       <button
-        on:click={() => hasJob ? navigate('results') : null}
-        disabled={!hasJob}
+        on:click={() => navigate('upload', 'host')}
         class="nav-button"
-        class:active={currentView === 'results'}
-        class:disabled={!hasJob}
+        class:active={currentView === 'upload' && activeMode === 'host'}
       >
-       Results
+       Within-Organism Probe Design
       </button>
-      
+
+      <button
+        on:click={() => navigate('upload', 'microbe')}
+        class="nav-button"
+        class:active={currentView === 'upload' && activeMode === 'microbe'}
+      >
+       Microbial Probe Design
+      </button>
+
+      {#if currentView !== 'home'}
+        <button
+          on:click={() => hasJob ? navigate('results') : null}
+          disabled={!hasJob}
+          class="nav-button"
+          class:active={currentView === 'results'}
+          class:disabled={!hasJob}
+        >
+         Results
+        </button>
+      {/if}
+
       <button
         on:click={() => navigate('about')}
         class="nav-button"
@@ -60,12 +79,12 @@
   <div class="nav-mobile">
     <button
       on:click={() => navigate('home')}
-      class="nav-button-mobile"
-      class:active={currentView === 'home'}
+      class="nav-brand"
+      aria-label="SHARP-FISH home"
     >
-     Home
+      SHARP-FISH
     </button>
-    
+
     <button
       on:click={toggleMobileMenu}
       class="hamburger-button"
@@ -82,23 +101,41 @@
   {#if mobileMenuOpen}
     <div class="mobile-menu">
       <button
-        on:click={() => navigate('upload')}
+        on:click={() => navigate('home')}
         class="mobile-menu-item"
-        class:active={currentView === 'upload'}
+        class:active={currentView === 'home'}
       >
-       Design Probes
+       Home
       </button>
-      
+
       <button
-        on:click={() => hasJob ? navigate('results') : null}
-        disabled={!hasJob}
+        on:click={() => navigate('upload', 'host')}
         class="mobile-menu-item"
-        class:active={currentView === 'results'}
-        class:disabled={!hasJob}
+        class:active={currentView === 'upload' && activeMode === 'host'}
       >
-       Results
+       Within-Organism Probe Design
       </button>
-      
+
+      <button
+        on:click={() => navigate('upload', 'microbe')}
+        class="mobile-menu-item"
+        class:active={currentView === 'upload' && activeMode === 'microbe'}
+      >
+       Microbial Probe Design
+      </button>
+
+      {#if currentView !== 'home'}
+        <button
+          on:click={() => hasJob ? navigate('results') : null}
+          disabled={!hasJob}
+          class="mobile-menu-item"
+          class:active={currentView === 'results'}
+          class:disabled={!hasJob}
+        >
+         Results
+        </button>
+      {/if}
+
       <button
         on:click={() => navigate('about')}
         class="mobile-menu-item"

@@ -99,6 +99,109 @@ def infer_source_transcripts(sam_file, gene_mappings=None, is_microbiome=False):
     return {'source_transcripts': source_transcripts, 'source_gene': source_gene}
 
 
+_HEADER_TOKEN_SPLIT = re.compile(r'[\s|,;:()\[\]]+')
+
+_REFSEQ_LOOKUP: dict = {}
+_REFSEQ_LOADED = False
+
+
+def _load_refseq_lookup() -> dict:
+    """Load NCBI RefSeq accession -> gene_symbol map (versionless keys).
+
+    Read once from data/ncbi/refseq_to_gene.tsv (built by
+    data/ncbi/build_refseq_lookup.py). Returns {} if the file is missing.
+    """
+    global _REFSEQ_LOADED
+    if _REFSEQ_LOADED:
+        return _REFSEQ_LOOKUP
+    import os
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    path = os.path.join(root, "data", "ncbi", "refseq_to_gene.tsv")
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                next(fh, None)
+                for line in fh:
+                    parts = line.rstrip("\n").split("\t")
+                    if len(parts) >= 2 and parts[0] and parts[1]:
+                        _REFSEQ_LOOKUP.setdefault(parts[0], parts[1])
+        except OSError:
+            pass
+    _REFSEQ_LOADED = True
+    return _REFSEQ_LOOKUP
+
+
+def resolve_source_from_header(header, gene_mappings):
+    """
+    Resolve the source gene/transcripts from a user-supplied FASTA header.
+
+    Scans every token in the header (split on whitespace and the punctuation
+    used in typical FASTA descriptions: `|,;:()[]`) and accepts the first
+    token that resolves to either:
+      - a transcript ID present as a key in `gene_mappings`, or
+      - a gene symbol present as a value in `gene_mappings`.
+
+    Each token is also tried with a trailing `.\\d+` version stripped, and
+    underscore-separated parts are tried individually. This catches identifiers
+    anywhere in the description, e.g. `EGFR` inside `(EGFR)`.
+
+    Returns the same dict shape as `infer_source_transcripts`. If nothing
+    resolves, returns empty source -- caller should treat every alignment as
+    off-target.
+    """
+    empty = {'source_transcripts': set(), 'source_gene': None}
+    if not header or not gene_mappings:
+        return empty
+
+    raw = header.strip()
+    if not raw:
+        return empty
+
+    gene_symbols = set(gene_mappings.values())
+    refseq_lookup = _load_refseq_lookup()
+
+    source_gene = None
+    matched_token = None
+    for token in _HEADER_TOKEN_SPLIT.split(raw):
+        if not token:
+            continue
+        candidates = [token, re.sub(r'\.\d+$', '', token)]
+        if '_' in token:
+            candidates.extend(p for p in token.split('_') if p)
+        for cand in candidates:
+            if cand in gene_mappings:
+                source_gene = gene_mappings[cand]
+                matched_token = cand
+                break
+            if cand in gene_symbols:
+                source_gene = cand
+                matched_token = cand
+                break
+            if cand in refseq_lookup:
+                # NCBI RefSeq accession -> gene symbol; only accept if that
+                # symbol is in the host transcriptome (i.e. has Ensembl
+                # transcripts) so source_transcripts can be populated.
+                sym = refseq_lookup[cand]
+                if sym in gene_symbols:
+                    source_gene = sym
+                    matched_token = cand
+                    break
+        if source_gene:
+            break
+
+    if not source_gene:
+        first_token = raw.split()[0]
+        print(f"Source header token '{first_token}' not found in transcriptome mappings - "
+              f"skipping source inference (all alignments treated as off-target)")
+        return empty
+
+    source_transcripts = {tid for tid, gname in gene_mappings.items() if gname == source_gene}
+    print(f"Source from header: gene '{source_gene}' "
+          f"(token '{matched_token}', {len(source_transcripts)} transcript(s))")
+    return {'source_transcripts': source_transcripts, 'source_gene': source_gene}
+
+
 def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
                              source_transcripts: Optional[Set[str]] = None,
                              source_gene: Optional[str] = None,
@@ -162,10 +265,12 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
                     'unique_genes': set(),
                     'is_microbiome_species': False,
                     'targets': [],
-                    'target_transcripts': []
+                    'target_transcripts': [],
+                    'alignments': [],  # (transcript, gene_name, mismatches) per hit
                 }
             probe_data[probe_id]['targets'].append(target_info)
             probe_data[probe_id]['target_transcripts'].append(target_info)
+            probe_data[probe_id]['alignments'].append((target_info, gene_name, mismatches))
             probe_data[probe_id]['total'] += 1
             probe_data[probe_id]['min_mm'] = min(probe_data[probe_id]['min_mm'], mismatches)
             probe_data[probe_id]['unique_genes'].add(gene_name)
@@ -177,13 +282,20 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
     for probe_id, data in probe_data.items():
         unique_gene_count = len(data['unique_genes'])
 
+        # Minimum mismatch among OFF-TARGET alignments only (i.e. hits that are
+        # NOT to the source gene / its isoforms). The risk level and the
+        # reported mismatch count must reflect the off-target, not a perfect
+        # self-match. Without this, a probe that matches its own gene at 0 mm
+        # but a paralog at 2 mm would be mislabeled "high risk: 0 mismatches".
+        off_mm = _offtarget_min_mm(
+            data['alignments'], source_transcripts, source_gene,
+            treat_all_as_offtarget=is_probe_input,
+        )
+
         # Probe-input mode: source is unknown, so any alignment is off-target.
         # Skip self-detection entirely to avoid the probe-ID substring fallback.
         if is_probe_input:
-            if data['min_mm'] <= 1:
-                status = 'high_risk'
-            else:
-                status = 'medium_risk'
+            status = 'high_risk' if (off_mm is not None and off_mm <= 1) else 'medium_risk'
 
         # For microbiome: check if ANY alignment is to a different species
         elif is_microbiome and data['is_microbiome_species']:
@@ -193,10 +305,7 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
             )
 
             if is_offtarget:
-                if data['min_mm'] <= 1:
-                    status = 'high_risk'
-                else:
-                    status = 'medium_risk'
+                status = 'high_risk' if (off_mm is not None and off_mm <= 1) else 'medium_risk'
             else:
                 status = 'safe'
 
@@ -213,25 +322,58 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
 
             if is_self:
                 status = 'safe'
-            elif data['min_mm'] <= 1:
+            elif off_mm is not None and off_mm <= 1:
                 status = 'high_risk'
             else:
                 status = 'medium_risk'
-        # High risk if perfect/near-perfect matches to multiple genes
-        elif data['min_mm'] <= 1:
+        # Multiple genes hit, at least one off-target.
+        elif off_mm is not None and off_mm <= 1:
             status = 'high_risk'
-        # Medium risk for other multi-gene alignments
         else:
             status = 'medium_risk'
+
+        # For non-safe probes report the off-target mismatch count; for safe
+        # probes the mismatch count isn't shown so the global min is fine.
+        if status == 'safe':
+            reported_mm = data['min_mm'] if data['min_mm'] != float('inf') else 0
+        else:
+            reported_mm = off_mm if off_mm is not None else (
+                data['min_mm'] if data['min_mm'] != float('inf') else 0
+            )
 
         results[probe_id] = {
             'status': status,
             'total_alignments': data['total'],
             'unique_genes': unique_gene_count,
-            'min_mismatches': data['min_mm'] if data['min_mm'] != float('inf') else 0
+            'min_mismatches': reported_mm,
         }
 
     return results
+
+
+def _offtarget_min_mm(alignments, source_transcripts, source_gene,
+                      treat_all_as_offtarget=False):
+    """Minimum mismatch count among off-target alignments.
+
+    An alignment is off-target if its transcript is not in
+    `source_transcripts` (version-tolerant) and its gene != `source_gene`.
+    Returns None when there are no off-target alignments.
+    `treat_all_as_offtarget` (probe-input mode) ignores the source entirely.
+    """
+    src = set(source_transcripts or [])
+    src_versionless = {t.split('.', 1)[0] for t in src}
+    offs = []
+    for transcript, gene, mm in alignments:
+        if treat_all_as_offtarget:
+            offs.append(mm)
+            continue
+        base = transcript.split('.', 1)[0]
+        in_source = (transcript in src) or (base in src_versionless)
+        if not in_source and source_gene:
+            in_source = (gene == source_gene)
+        if not in_source:
+            offs.append(mm)
+    return min(offs) if offs else None
 
 
 def _check_is_self(probe_id, targets, target_transcripts, unique_genes,

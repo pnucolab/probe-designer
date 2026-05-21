@@ -39,7 +39,7 @@ def generate_candidate_probes(fasta_file, probe_length=36, step_size=3, min_gc=4
 def save_probes_to_fasta(probes, output_file):
     fasta_records = []
     for idx, p in enumerate(probes):
-        probe_id = f"probe_{idx}|start={p['start']}|end={p['end']}|transcript:{p['isoform_id']}"
+        probe_id = f"probe_{idx}|start={p['start']}|end={p['end']}|{p['isoform_id']}"
         fasta_records.append(
             SeqRecord(
                 Seq(p['probe_seq']),
@@ -65,8 +65,8 @@ if __name__ == "__main__":
                         help="Species name (default: human)")
     parser.add_argument("--input", default=None,
                         help="Input FASTA file (default: (required) provide --input or use pipeline to pass custom FASTA)")
-    parser.add_argument("--output", default="outputs/candidate_probes.fa",
-                        help="Output FASTA file (default: outputs/candidate_probes.fa)")
+    parser.add_argument("--output", default="output/candidate_probes.fa",
+                        help="Output FASTA file (default: output/candidate_probes.fa)")
     
     args = parser.parse_args()
     

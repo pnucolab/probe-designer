@@ -18,7 +18,7 @@ services:
       - redis
     volumes:
       - ./data:/app/data
-      - ./outputs:/app/outputs
+      - ./output:/app/output
       - ./gene_sequences:/app/gene_sequences
       - ./probe_sequences:/app/probe_sequences
     networks:
@@ -39,7 +39,7 @@ services:
       - api
     volumes:
       - ./data:/app/data
-      - ./outputs:/app/outputs              
+      - ./output:/app/output
       - ./gene_sequences:/app/gene_sequences
       - ./probe_sequences:/app/probe_sequences 
     networks:

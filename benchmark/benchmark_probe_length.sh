@@ -51,7 +51,7 @@ fi
 
 for PL in "${PROBE_LENGTHS[@]}"; do
     TASK_ID="benchmark_pl${PL}"
-    mkdir -p "outputs/alignments/${TASK_ID}"
+    mkdir -p "output/alignments/${TASK_ID}"
     echo ""
     echo ">>> Running probe_designer.py with --probe-length $PL ..."
 
@@ -63,7 +63,7 @@ for PL in "${PROBE_LENGTHS[@]}"; do
         --probe-length "$PL" \
         --task-id "$TASK_ID" \
         "${EXTRA_ARGS[@]}" \
-        > "outputs/alignments/${TASK_ID}/run.log" 2>&1 || true
+        > "output/alignments/${TASK_ID}/run.log" 2>&1 || true
 
     END=$(date +%s%N)
     ELAPSED=$(( (END - START) / 1000000000 )).$(( ((END - START) % 1000000000) / 1000000 ))

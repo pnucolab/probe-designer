@@ -57,7 +57,7 @@ def build_db(genome_files, k, db_path, threads):
             flist.write(gf + '\n')
         file_list_path = flist.name
     try:
-        cmd = f"xargs cat < '{file_list_path}' | jellyfish count -m {k} -s 5G -t {threads} -L 2 -C -o '{db_path}' /dev/fd/0"
+        cmd = f"xargs cat < '{file_list_path}' | jellyfish count -m {k} -s 5G -t {threads} -C -o '{db_path}' /dev/fd/0"
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
         return proc.returncode == 0
     finally:

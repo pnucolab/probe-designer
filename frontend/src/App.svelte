@@ -8,16 +8,22 @@
   import LandingPage from './components/LandingPage.svelte';
   import Button from './components/Button.svelte';
   import './styles/common.css';
+  import './app.css';
 
   let currentView = 'home';
   let currentJob = null;
+  let designMode = 'microbe';
 
   onMount(() => {
     try {
       const params = new URLSearchParams(window.location.search);
       const jid = params.get('job_id');
       const view = params.get('view');
-      
+      const mode = params.get('mode');
+      if (mode === 'host' || mode === 'microbe') {
+        designMode = mode;
+      }
+
       if (jid) {
         currentJob = { job_id: jid };
         currentView = 'results';
@@ -43,13 +49,16 @@
   }
 
   function handleNavigate(e) {
-    const { view } = e.detail;
+    const { view, mode } = e.detail;
     currentView = view;
-    
+    if (mode === 'host' || mode === 'microbe') {
+      designMode = mode;
+    }
+
     if (view === 'home') {
       window.history.pushState({}, '', '/');
     } else if (view === 'upload') {
-      window.history.pushState({}, '', '/?view=upload');
+      window.history.pushState({}, '', `/?view=upload&mode=${designMode}`);
     } else if (view === 'results' && currentJob && currentJob.job_id) {
       window.history.pushState({}, '', `/?job_id=${encodeURIComponent(currentJob.job_id)}`);
     } else if (view === 'about') {
@@ -57,12 +66,20 @@
     }
   }
 
-  function handleGetStarted() {
+  function handleGetStarted(mode) {
+    if (mode === 'host' || mode === 'microbe') {
+      designMode = mode;
+    }
     handleNavigate({ detail: { view: 'upload' } });
+    // Reflect the mode in the URL so reloads keep the same form.
+    const params = new URLSearchParams(window.location.search);
+    params.set('view', 'upload');
+    params.set('mode', designMode);
+    window.history.replaceState({}, '', `/?${params.toString()}`);
   }
 </script>
 
-<Navigation {currentView} hasJob={!!currentJob} on:navigate={handleNavigate} />
+<Navigation {currentView} hasJob={!!currentJob} activeMode={designMode} on:navigate={handleNavigate} />
 
 <main class="main-container">
   {#if currentView === 'home'}
@@ -71,7 +88,7 @@
   {:else if currentView === 'upload'}
     <PageHeader />
     <div class="content-wrapper">
-      <UploadForm on:submitted={handleSubmitted} />
+      <UploadForm mode={designMode} on:submitted={handleSubmitted} />
     </div>
 
   {:else if currentView === 'results'}
@@ -82,18 +99,19 @@
 
   {:else if currentView === 'about'}
     <div class="section">
-      <h1 class="heading-1">About SoloMicrobe</h1>
-      
+      <h1 class="heading-1">About SHARP-FISH</h1>
+
       <section>
         <h2 class="heading-2">Overview</h2>
         <p class="text-body">
-          SoloMicrobe is an interactive web platform for designing oligonucleotide probes 
-          that target microbial genes with high specificity. Users can provide microbial sequences or 
-          pre-existing probe sets, and the tool screens each candidate against the host genome and 
-          the co-residing microbes present in complex microbial communities, removing candidates with 
-          up to two mismatches and a stretch of greater than or equal to 14 consecutive matchesto 
-          off-target sequences.The final probe sets can be applied to detect microbial transcripts 
-          within complex, host-associated tissues.
+          SHARP-FISH is an interactive web platform for designing oligonucleotide probes
+          that target host or microbial genes with high specificity. Users can provide
+          host transcripts, microbial sequences, or pre-existing probe sets, and the tool
+          screens each candidate against the relevant host transcriptome and the co-residing
+          microbes present in complex microbial communities, removing candidates with up to
+          two mismatches and a stretch of greater than or equal to 14 consecutive matches to
+          off-target sequences. The final probe sets can be applied to detect host or
+          microbial transcripts within complex, host-associated tissues.
         </p>
       </section>
 
@@ -172,18 +190,26 @@
       <section>
         <h2 class="heading-2">Getting Started</h2>
         <p class="text-body" style="margin-bottom: 1rem;">
-          Ready to design high-specificity probes for your microbiome study? 
-          Go to the <strong>Design Probes</strong> tab to upload your 
-          microbial gene sequences and set your analysis parameters. Probe filtering
-          against the host genome will be completed within minutes.
+          Pick a probe design mode below. SHARP-FISH will validate every candidate
+          against the relevant host transcriptome and/or co-residing microbiome
+          catalogs in minutes.
         </p>
-        <Button
-          variant="gradient"
-          size="md"
-          onClick={() => handleNavigate({ detail: { view: 'upload' } })}
-        >
-          Start Analysis →
-        </Button>
+        <div style="display:flex; flex-wrap:wrap; gap:12px;">
+          <Button
+            variant="gradient"
+            size="md"
+            onClick={() => handleGetStarted('host')}
+          >
+            Within-Organism Probe Design →
+          </Button>
+          <Button
+            variant="gradient"
+            size="md"
+            onClick={() => handleGetStarted('microbe')}
+          >
+            Microbial Probe Design →
+          </Button>
+        </div>
       </section>
     </div>
   {/if}
