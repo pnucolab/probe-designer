@@ -1,6 +1,7 @@
 <script>
   import { onMount, onDestroy } from 'svelte';
   export let onGetStarted;
+  export let onAbout = () => {};
 
   let visible = false;
 
@@ -15,27 +16,28 @@
 
 <svelte:head>
   <title>SHARP-FISH — Within-Organism & Microbial FISH Probe Design</title>
-  <meta name="description" content="Design highly specific oligonucleotide FISH probes within an organism's transcriptome or for a microbial gene." />
+  <meta name="description" content="Design highly specific oligonucleotide FISH probes" />
 </svelte:head>
 
 <div class="sp-page" class:sp-visible={visible}>
 
-  <!-- Hero -->
   <section class="sp-hero">
     <div class="sp-container sp-center">
       <h1 class="sp-hero-title">SHARP-FISH</h1>
       <p class="sp-hero-sub">
-        Design highly specific oligonucleotide FISH probes within an organism's transcriptome or for a microbial gene
+        Computaional tool for designing specific oligonucleotide FISH probes
       </p>
+      <button type="button" class="sp-hero-cta" on:click={onAbout}>
+        About SHARP-FISH
+      </button>
     </div>
   </section>
 
-  <!-- Tools -->
   <section id="tools" class="sp-section">
     <div class="sp-container">
       <div class="sp-section-head">
         <h2 class="sp-section-title">Probe Design Modes</h2>
-        <p class="sp-section-sub">Choose where your target lives — within a single organism's transcriptome or in a microbial genome.</p>
+        <p class="sp-section-sub">Choose where your target lives: within a single organism's transcriptome or in a microbial genome.</p>
       </div>
 
       <div class="sp-tool-grid">
@@ -62,7 +64,6 @@
 </div>
 
 <style>
-  /* ─────────────────────────  Page shell  ─────────────────────────── */
   .sp-page {
     width: 100%;
     opacity: 0;
@@ -80,35 +81,63 @@
   }
   .sp-center { text-align: center; }
 
-  /* ─────────────────────────  Hero  ────────────────────────────────── */
   .sp-hero {
     box-sizing: border-box;
     width: 100%;
     position: relative;
-    padding: 80px 24px 96px;
-    background: transparent;
+    padding: 58px 24px 72px;
+    background-color: #ffffff;
+    background-image: url('/hero1.png');
+    background-repeat: no-repeat;
+    background-position: center top;
+    background-size: cover;
   }
   .sp-hero-title {
-    margin: 0 0 14px 0;
-    font-size: 56px;
-    font-weight: 800;
+    margin: 0 0 16px 0;
+    font-size: 72px;
+    font-weight: 400;
     line-height: 1.1;
-    letter-spacing: -0.02em;
-    background: linear-gradient(90deg, #2563eb 0%, #7c3aed 100%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    letter-spacing: -0.01em;
+    color: #1e293b;
+    text-shadow:
+      0 2px 4px rgba(15, 23, 42, 0.18),
+      0 8px 22px rgba(15, 23, 42, 0.20);
   }
   .sp-hero-sub {
     margin: 0 auto;
     max-width: 720px;
-    font-size: 19px;
+    font-size: 20px;
     color: #475569;
     line-height: 1.55;
+    text-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
   }
 
-  /* ─────────────────────────  Sections  ────────────────────────────── */
-  .sp-section { padding: 72px 0 88px; }
+  .sp-hero-cta {
+    display: inline-block;
+    margin-top: 50px;
+    padding: 12px 28px;
+    background: #2563eb;
+    color: #ffffff;
+    border: none;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    text-decoration: none;
+    box-shadow: 0 4px 14px rgba(37, 99, 235, 0.28);
+    transition: background-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  }
+  .sp-hero-cta:hover,
+  .sp-hero-cta:focus-visible {
+    background: #1d4ed8;
+    transform: translateY(-1px);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.35);
+    outline: none;
+  }
+
+  .sp-section { padding: 36px 0 44px; }
 
   #tools {
     box-sizing: border-box;
@@ -116,10 +145,10 @@
     background: transparent;
   }
 
-  .sp-section-head { text-align: center; margin-bottom: 40px; }
+  .sp-section-head { text-align: center; margin-bottom: 24px; }
   .sp-section-title {
-    margin: 0 0 10px 0;
-    font-size: 30px;
+    margin: 0 0 6px 0;
+    font-size: 24px;
     font-weight: 800;
     color: #0f172a;
     letter-spacing: -0.01em;
@@ -127,14 +156,14 @@
   .sp-section-sub {
     margin: 0;
     color: #64748b;
-    font-size: 16px;
-    line-height: 1.55;
+    font-size: 15px;
+    line-height: 1.5;
   }
 
   .sp-tool-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
-    gap: 24px;
+    gap: 18px;
   }
   .sp-tool-card {
     box-sizing: border-box;
@@ -142,8 +171,8 @@
     text-align: center;
     background: #ffffff;
     border: 1px solid #e2e8f0;
-    border-radius: 16px;
-    padding: 40px 28px 34px;
+    border-radius: 14px;
+    padding: 24px 22px 22px;
     cursor: pointer;
     transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
     font: inherit;
@@ -154,7 +183,6 @@
     overflow-wrap: anywhere;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 14px rgba(15, 23, 42, 0.04);
   }
-  /* Coloured accent bar across the top of each card */
   .sp-tool-card::before {
     content: '';
     position: absolute;
@@ -176,17 +204,17 @@
   }
 
   .sp-tool-title {
-    margin: 18px 0 12px 0;
-    font-size: 22px;
+    margin: 12px 0 6px 0;
+    font-size: 19px;
     font-weight: 800;
     color: #0f172a;
   }
   .sp-tool-desc {
     margin: 0 auto;
     max-width: 42ch;
-    font-size: 14.5px;
+    font-size: 14px;
     color: #4b5563;
-    line-height: 1.6;
+    line-height: 1.5;
   }
   .sp-tag {
     display: inline-block;

@@ -1,16 +1,17 @@
-html, body, #app { height: 100%; margin:0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif; color: #4b5563; }
+html, body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif; color: #4b5563; }
+/* #app must be at least one viewport tall so that .main-container's
+   `flex: 1 0 auto` (sticky-footer pattern) actually fills the screen on
+   short pages — the footer pins to the viewport bottom instead of the
+   bottom of its own content. */
+#app { display:flex; flex-direction:column; align-items:stretch; min-height: 100vh; }
 
-/* Landing-page unified background. Toggled by LandingPage.svelte via the
-   `landing-active` class on <body>; reverts automatically on navigation. */
+/* Landing-page page chrome. Toggled by LandingPage.svelte via the
+   `landing-active` class on <body>; reverts automatically on navigation.
+   The hero image itself lives on .sp-hero inside LandingPage.svelte so it
+   only covers the hero section, not the rest of the page. */
 body.landing-active {
   background-color: #ffffff;
-  background-image: url('/hero.png');
-  background-repeat: no-repeat;
-  background-position: center top;
-  background-size: cover;
-  background-attachment: fixed;
   overflow-x: hidden;
-  overflow-y: auto;
 }
 body.landing-active .nav-container { background: #ffffff; }
 /* Pin the hero flush against the nav's underline (no gap below the nav). */
@@ -18,7 +19,6 @@ body.landing-active .nav-desktop { margin-bottom: 0; }
 body.landing-active .nav-mobile { margin-bottom: 0; }
 body.landing-active .main-container { background: transparent; padding: 0; gap: 0; margin-top: 0; }
 body.landing-active .sp-page { margin-top: 0; }
-#app { display:flex; flex-direction:column; align-items:stretch; }
 .btn { background:#0ea5e9; color:white; padding:0.5rem 1rem; border-radius:6px; }
 .btn:disabled { opacity:0.6 }
 .text-red-600 { color:#dc2626 }

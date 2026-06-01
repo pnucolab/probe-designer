@@ -83,7 +83,10 @@
 
 <main class="main-container">
   {#if currentView === 'home'}
-    <LandingPage onGetStarted={handleGetStarted} />
+    <LandingPage
+      onGetStarted={handleGetStarted}
+      onAbout={() => handleNavigate({ detail: { view: 'about' } })}
+    />
 
   {:else if currentView === 'upload'}
     <PageHeader />

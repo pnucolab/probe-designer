@@ -6,7 +6,10 @@ html, body, #app {
 
 .main-container {
   width: 100%;
-  min-height: 100vh;
+  /* Fill the viewport space remaining under <Navigation> instead of taking
+     100vh on its own — otherwise nav (~60px) + main (100vh) overflows the
+     viewport and the sticky footer ends up below the fold. */
+  flex: 1 0 auto;
   padding: 1rem;
   box-sizing: border-box;
   display: flex;
