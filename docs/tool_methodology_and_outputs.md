@@ -135,13 +135,28 @@ For **Probe Sequence Input:**
 - **Cross-reactivity detection via k-mer matching**
 
 **Supported Species:**
-- `human`: Human GRCh38 genome
-- `mouse`: Mouse GRCm39 genome  
-- `gut-microbe`: Gut microbiome collection
+
+Hosts (registered in [`config/organisms.yml`](config/organisms.yml)):
+- `human`: Human (Homo sapiens, GRCh38)
+- `mouse`: Mouse (Mus musculus, GRCm39)
+- `zebrafish`: Zebrafish (Danio rerio, GRCz11)
+- `drosophila`: Fruit Fly (Drosophila melanogaster, BDGP6)
+- `celegans`: Nematode (Caenorhabditis elegans, WBcel235)
+- `xtropicalis`: Tropical Clawed Frog (Xenopus tropicalis, UCB_Xtro_10.0)
+- `chicken`: Chicken (Gallus gallus, GRCg7b)
+- `pig`: Pig (Sus scrofa, Sscrofa11.1)
+- `arabidopsis`: Thale Cress (Arabidopsis thaliana, TAIR10)
+- `maize`: Maize (Zea mays, Zm-B73-REFERENCE-NAM-5.0)
+- `soybean`: Soybean (Glycine max, Glycine_max_v2.1)
+
+Microbiome catalogs:
+- `gut-microbe`: Human gut microbiome
 - `human-oral-microbiome`: Human oral microbiome
 - `human-skin-microbiome`: Human skin microbiome
 - `human-vaginal-microbiome`: Human vaginal microbiome
 - `mouse-gut-microbiome`: Mouse gut microbiome
+
+New hosts or catalogs are added by editing `config/organisms.yml` — no code changes required.
 
 #### 4. JBrowse Generator ([`backend/jbrowse_generator.py`](backend/jbrowse_generator.py))
 
@@ -217,7 +232,7 @@ For **Probe Sequence Input:**
 **Output Files:**
 - `safe_probes.fa` - Final safe probes passing all filters
 - `14mer_matches_report.txt` - Detailed match analysis
-- `safe_probes_scores.csv` - Thermodynamic scoring of safe probes
+- `safe_probes_scores.txt` - Thermodynamic metrics of safe probes
 
 **Match Report Format:**
 ```
@@ -319,10 +334,9 @@ GATCGATCGATCGA   12-25      ENST00000345678.2            TUBB         54321
 - Expandable probe details with sequence information
 
 **Non-Aligned Probes Display:**
-- Ranked probe table with scoring metrics
-- Thermodynamic properties (Tm, GC%, complexity)
-- Quality status indicators (Excellent, Good, Acceptable, Rejected)
-- Color-coded scoring visualization
+- Probe table with per-probe metrics
+- Thermodynamic properties (Tm, GC%, complexity, secondary structure, homopolymer)
+- Color-coded metric visualization
 
 **File Downloads:**
 - SAM/BAM files (per chromosome and merged)
@@ -482,9 +496,9 @@ GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCT
 - Used by JBrowse for visualization
 
 **Probe Scoring Files:**
-- Tab-delimited text format
+- Whitespace-delimited text table
 - Thermodynamic properties and quality metrics
-- Ranked by composite scoring algorithm
+- Listed in probe order (no composite score or ranking)
 
 **14-mer Match Reports:**
 - Text format with detailed match analysis

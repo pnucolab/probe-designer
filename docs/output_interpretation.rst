@@ -206,32 +206,32 @@ The final set of probes that passed both alignment filtering and k-mer safety ch
 safe_probes_scores.txt
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Ranked list of safe probes scored by thermodynamic and sequence quality metrics.
+Per-probe thermodynamic and sequence-quality metrics for the safe probes. The
+probes are listed in their original order — the file is not ranked, and there is
+no composite score or quality tier.
 
 **Example:**
 
 .. code-block:: text
 
-   Rank  Probe ID                                                     Sequence                              Score  Tm(°C)  GC%   Len  Complexity  SecStruct  Homopoly  Status
-   1     probe_319|start=349|end=384  CGCGACAGCCGTACCGGCGTGTACATCGGAGTGATC  91.55  49.20   63.9  36   0.971       0.000      No        Excellent
-   2     probe_318|start=348|end=383  CCGCGACAGCCGTACCGGCGTGTACATCGGAGTGAT  88.49  50.22   63.9  36   0.971       0.000      No        Very Good
-   3     probe_24|start=33|end=68     CACGGACGCGCCGATCGCGGTCGTCGGACTGTCCTG  76.15  53.06   72.2  36   0.922       0.000      No        Good
+   NON-ALIGNED PROBE SCORING RESULTS
+   =================================
+
+   Probe ID                     Sequence                              Tm(°C)  GC%   Len  Complexity  SecStruct  Homopoly
+   -------------------------------------------------------------------------------------------------------------------
+   probe_319|start=349|end=384  CGCGACAGCCGTACCGGCGTGTACATCGGAGTGATC  49.20   63.9  36   0.971       0.000      No
+   probe_24|start=33|end=68     CACGGACGCGCCGATCGCGGTCGTCGGACTGTCCTG  53.06   72.2  36   0.922       0.000      No
 
 **Column descriptions:**
 
-- **Rank** — Position in the ranking (1 = best probe)
-- **Score** — Overall quality score (0–100, higher is better). Combines all metrics below
-- **Tm (°C)** — Melting temperature. Ideal range depends on your assay (typically 45–55°C for FISH probes)
-- **GC%** — GC content. Balanced probes (40–65%) generally perform best
-- **Complexity** — Sequence complexity on a 0–1 scale. Higher values indicate less repetitive sequences (>0.9 is good)
-- **SecStruct** — Secondary structure penalty. 0 means no predicted self-folding; higher values indicate potential hairpin formation
-- **Homopoly** — Whether a homopolymer run (e.g., AAAA, CCCC) was detected (Yes/No)
-- **Status** — Quality tier based on the overall score:
-
-  - **Excellent** (≥90): Top-quality probe, highly recommended
-  - **Very Good** (≥80): Strong candidate for experimental use
-  - **Good** (≥70): Suitable probe with minor trade-offs
-  - **Acceptable** (<70): Usable but consider alternatives if available
+- **Probe ID** — Probe identifier with start/end positions
+- **Sequence** — The probe sequence
+- **Tm (°C)** — Melting temperature (nearest-neighbor, formamide-corrected). Ideal range depends on your assay (typically 45–55°C for FISH probes)
+- **GC%** — GC content percentage. Balanced probes (40–65%) generally perform best
+- **Len** — Probe length in nucleotides
+- **Complexity** — Shannon-entropy sequence complexity on a 0–1 scale. Higher values indicate less repetitive sequences (>0.9 is good)
+- **SecStruct** — Secondary structure penalty, 0.0 (no predicted self-folding) to 1.0 (strong hairpin/self-dimer)
+- **Homopoly** — Whether a homopolymer run (≥5 bp, e.g., AAAAA) was detected (Yes/No)
 
 
 probes.gff3
@@ -334,7 +334,7 @@ Summary of Output Files
      - Final safe probes after all filtering
      - Both
    * - ``safe_probes_scores.txt``
-     - Ranked and scored safe probes
+     - Per-probe quality metrics for safe probes
      - Both
    * - ``probes.gff3``
      - Probe positions for genome browser
