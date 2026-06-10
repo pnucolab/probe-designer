@@ -52,8 +52,9 @@ celery -A backend.celery_worker worker --loglevel=info
 uvicorn backend.main_app:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-> **Note:** The first run may take a while because the reference FASTA file and annotation 
-file for the host are downloaded automatically. On subsequent runs, the tool will use the previously downloaded files unless new releases are available.
+> **Note:** Genome data is not downloaded automatically. You must obtain and
+place the reference files yourself before running the tool — see
+[Preparing Genome Data](#preparing-genome-data) below.
 
 ### Frontend
 
@@ -62,6 +63,87 @@ cd frontend
 conda activate probe-designer
 npm install
 npm run dev
+```
+
+## Preparing Genome Data
+
+All genome data lives under `data/` and is config-driven through
+`config/organisms.yml`. Adding or updating an organism requires editing that
+file plus placing the matching files on disk — no code changes. Genome files
+are **not** downloaded automatically; you obtain and place them yourself.
+
+### 1. The organism registry (`config/organisms.yml`)
+
+Each host entry declares where its files live and how to find them:
+
+| Field | Meaning |
+|-------|---------|
+| `genome_dir` | Directory holding the genome FASTA + GTF |
+| `genome_file_regex` | Python regex matching the genome FASTA; capture group 1 = release number |
+| `transcript_chunks_dir` | Directory of split transcript chunks aligned against |
+| `microbiomes` | Microbiome catalogs hostable on this organism (each has `id`, `data_dir`, `source_url`) |
+
+### 2. Host genomes
+
+Place files in the host's `genome_dir` (GENCODE hosts under
+`data/gencode_data/<id>/`, Ensembl hosts under `data/ensembl_data/<id>/`):
+
+- Genome FASTA named to match `genome_file_regex`
+  (e.g. `GRCh38.p14.genome.release_49.fa`)
+- Matching annotation GTF (same release number)
+- Transcript FASTA (e.g. `..._transcripts.fa`)
+
+Sources: [GENCODE](https://www.gencodegenes.org/) (human, mouse),
+[Ensembl](https://www.ensembl.org/) (other organisms).
+
+Split the transcript FASTA into chunks (~7–8 MB each) under
+`transcript_chunks_dir` so the pipeline can align in parallel. Helper scripts
+`split_human_transcripts.py` and `split_chunks.py` do this (adjust their
+hard-coded input paths to your files first).
+
+### 3. Microbiome catalogs
+
+Place one FASTA per genome (`.fa`/`.fna`) in the catalog's `data_dir`
+(e.g. `data/gut-microbe/`). Catalog sources are linked from each
+`source_url` in `organisms.yml` (e.g. EBI MGnify genome catalogues).
+An optional `genomes-all_metadata.tsv` adds species annotation.
+
+### 4. Build k-mer databases
+
+Off-target screening uses pre-built Jellyfish k-mer databases. Build them once
+per species (re-used on later runs):
+
+```bash
+# Build all k-mer lengths (14–19) for every species
+python build_kmer_dbs.py
+
+# One species only
+python build_kmer_dbs.py --species gut-microbe
+
+# Specific k-mer lengths / thread count
+python build_kmer_dbs.py --species human mouse --kmer-lengths 16 17 18 --threads 40
+```
+
+Outputs `kmer_<k>mer_counts.jf` next to each species' genome files. Requires
+[Jellyfish](https://github.com/gmarcais/Jellyfish) on your `PATH`.
+
+### Expected layout
+
+```
+data/
+├── gencode_data/
+│   ├── human/
+│   │   ├── GRCh38.p14.genome.release_49.fa
+│   │   ├── gencode.v49.basic.annotation.release_49.gtf
+│   │   ├── GRCh38.p14.genome.release_49_transcripts.fa
+│   │   └── transcript_chunks/
+│   │       ├── ...part000.fa ... part093.fa
+│   │       └── kmer_14mer_counts.jf ... kmer_19mer_counts.jf
+│   └── mouse/ ...
+├── ensembl_data/            # zebrafish, drosophila, ... (same shape)
+└── gut-microbe/             # one FASTA per genome + kmer_*.jf
+    ├── MGYG000000001.fa
+    └── genomes-all_metadata.tsv
 ```
 
 ## Usage

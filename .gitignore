@@ -68,6 +68,4 @@ pipeline_log.txt
 EOFsplit_chunks.py
 
 outputs/
-split_chunks.py
-split_human_transcripts.py
 .vite/
