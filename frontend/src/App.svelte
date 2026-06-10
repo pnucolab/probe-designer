@@ -136,7 +136,7 @@
       <section>
         <h2 class="heading-2">How to Use</h2>
         <div class="grid-auto">
-          <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/index.html" target="_blank" rel="noopener" class="doc-link-card">
+          <a href="https://probe-designer-rtd.readthedocs.io/en/latest/index.html" target="_blank" rel="noopener" class="doc-link-card">
             <div class="doc-link-row">
               <div class="doc-link-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -150,7 +150,7 @@
               </div>
             </div>
           </a>
-          <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/userguide/07-output-interpretation.html" target="_blank" rel="noopener" class="doc-link-card">
+          <a href="https://probe-designer-rtd.readthedocs.io/en/latest/userguide/07-output-interpretation.html" target="_blank" rel="noopener" class="doc-link-card">
             <div class="doc-link-row">
               <div class="doc-link-icon">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -172,7 +172,7 @@
       <section>
         <h2 class="heading-2">Version History</h2>
         <p class="text-body">
-          See the <a href="https://solomicrobe-rtd.readthedocs.io/en/latest/changelog.html" target="_blank" rel="noopener" style="color: #3b82f6; text-decoration: underline;">changelog</a> for a full list of releases, features, and updates.
+          See the <a href="https://probe-designer-rtd.readthedocs.io/en/latest/changelog.html" target="_blank" rel="noopener" style="color: #3b82f6; text-decoration: underline;">changelog</a> for a full list of releases, features, and updates.
         </p>
       </section>
 
