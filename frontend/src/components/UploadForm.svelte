@@ -86,14 +86,14 @@ GCCGCCTTCTTCGGCATATC`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   let species = 'human';
-  let selectedMicrobiome = '';
+  let selectedMicrobiomes = [];
   let kmerLength = '';
   let alignMicrobiome = false;
   let alignHost = true;
   $: if (mode === 'host') {
     alignHost = true;
     alignMicrobiome = false;
-    selectedMicrobiome = '';
+    selectedMicrobiomes = [];
   }
   let probe_length = '';
   let max_mismatches = '';
@@ -104,8 +104,8 @@ GCCGCCTTCTTCGGCATATC`;
   $: hostLabel = currentHost ? `${currentHost.display_name} Transcriptome` : 'Organism Transcriptome';
   let effectiveSpecies;
   $: {
-    if (selectedMicrobiome && alignMicrobiome) {
-      effectiveSpecies = selectedMicrobiome;
+    if (selectedMicrobiomes.length && alignMicrobiome) {
+      effectiveSpecies = selectedMicrobiomes[0];
     } else {
       effectiveSpecies = species;
     }
@@ -164,7 +164,7 @@ GCCGCCTTCTTCGGCATATC`;
       error = 'Please select at least one target (Host Transcriptome or Additional Microbiome)';
       return;
     }
-    if (alignMicrobiome && !selectedMicrobiome) {
+    if (alignMicrobiome && selectedMicrobiomes.length === 0) {
       if (alignHost) {
         error = 'Please select a microbiome type or uncheck Additional Microbiome';
       } else {
@@ -283,6 +283,7 @@ GCCGCCTTCTTCGGCATATC`;
       console.log('Appending probe_sequence');
     }
     form.append('species', effectiveSpecies);
+    form.append('microbiomes', alignMicrobiome ? selectedMicrobiomes.join(',') : '');
     form.append('mode', mode);
     form.append('align_microbiome', alignMicrobiome ? 'true' : 'false');
     form.append('align_host', alignHost ? 'true' : 'false');
@@ -372,7 +373,7 @@ GCCGCCTTCTTCGGCATATC`;
       <div class="form-grid">
         <div>
           <label for="species" class="label-text">{mode === 'host' ? 'Organism' : 'Host Organism'}</label>
-          <select id="species" bind:value={species} on:change={() => { selectedMicrobiome = ''; alignMicrobiome = false; }} class="select-input">
+          <select id="species" bind:value={species} on:change={() => { selectedMicrobiomes = []; alignMicrobiome = false; }} class="select-input">
             {#each visibleHosts as h}
               <option value={h.id}>{h.display_name}</option>
             {/each}
@@ -392,12 +393,12 @@ GCCGCCTTCTTCGGCATATC`;
 
               {#if hostMicrobiomes.length > 0}
                 <label class="radio-label">
-                  <input type="checkbox" bind:checked={alignMicrobiome} on:change={(e) => { if (!e.target.checked) selectedMicrobiome = ''; }}> Additional Microbiome
+                  <input type="checkbox" bind:checked={alignMicrobiome} on:change={(e) => { if (!e.target.checked) selectedMicrobiomes = []; }}> Additional Microbiome
                 </label>
                 <div style="margin-left: 24px; display: flex; flex-direction: column; gap: 4px; opacity: {alignMicrobiome ? 1 : 0.5};">
                   {#each hostMicrobiomes as m}
                     <label class="radio-label">
-                      <input type="radio" bind:group={selectedMicrobiome} value={m.id} disabled={!alignMicrobiome}> {m.display_name}
+                      <input type="checkbox" bind:group={selectedMicrobiomes} value={m.id} disabled={!alignMicrobiome}> {m.display_name}
                       {#if m.source_url}
                         <a href={m.source_url} target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
                       {/if}

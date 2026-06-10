@@ -471,6 +471,7 @@ async def create_job(
     kmer_length: int = Form(18),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
+    microbiomes: str = Form(""),
     align_microbiome: str = Form("false"),
     align_host: str = Form("false"),
     tm_range: str = Form("42-47"),
@@ -642,6 +643,7 @@ async def create_job(
     
     pipeline_args = {
         'species': species,
+        'microbiomes': microbiomes,
         'probe_length': probe_length,
         'max_mismatches': max_mismatches,
         'kmer_length': kmer_length,

@@ -40,7 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False):
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, microbiomes="", align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False):
     """
     Run the probe design pipeline.
     
@@ -93,6 +93,8 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
         ]
         cmd.extend(["--tm-range", tm_range])
         cmd.extend(["--gc-range", gc_range])
+        if microbiomes:
+            cmd.extend(["--microbiomes", microbiomes])
         if align_microbiome:
             cmd.append("--align-microbiome")
         if align_host:
