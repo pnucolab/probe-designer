@@ -371,7 +371,7 @@ GCCGCCTTCTTCGGCATATC`;
   
       <div class="form-grid">
         <div>
-          <label for="species" class="label-text">Organism</label>
+          <label for="species" class="label-text">{mode === 'host' ? 'Organism' : 'Host Organism'}</label>
           <select id="species" bind:value={species} on:change={() => { selectedMicrobiome = ''; alignMicrobiome = false; }} class="select-input">
             {#each visibleHosts as h}
               <option value={h.id}>{h.display_name}</option>

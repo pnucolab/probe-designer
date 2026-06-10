@@ -42,7 +42,7 @@
 
       <div class="sp-tool-grid">
         <button type="button" class="sp-tool-card sp-tool-host" on:click={() => onGetStarted('host')}>
-          <span class="sp-tag sp-tag-host">Organism</span>
+          <span class="sp-tag sp-tag-host">Within-organism</span>
           <h3 class="sp-tool-title">Within-Organism Probe Design</h3>
           <p class="sp-tool-desc">
             Target a single gene's transcript and stay specific within the organism's transcriptome (human, mouse, zebrafish, fly, worm, frog, …).
@@ -87,7 +87,7 @@
     position: relative;
     padding: 58px 24px 72px;
     background-color: #ffffff;
-    background-image: url('/hero1.png');
+    background-image: url('/hero.png');
     background-repeat: no-repeat;
     background-position: center top;
     background-size: cover;
@@ -164,6 +164,8 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
     gap: 18px;
+    max-width: 800px;   
+    margin: 0 auto; 
   }
   .sp-tool-card {
     box-sizing: border-box;
