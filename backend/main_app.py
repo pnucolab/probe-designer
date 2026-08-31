@@ -10,6 +10,7 @@ Supports two input scenarios:
 """
 
 import os
+import json
 import shutil
 import logging
 from datetime import datetime
@@ -17,12 +18,12 @@ from pathlib import Path
 import uuid
 from typing import Optional, List, Dict
 import re
-from fastapi import FastAPI, HTTPException, Form, Request, Query
+from fastapi import FastAPI, HTTPException, Form, Request, Query, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .sam_parser import parse_sam_file, count_sam_alignments
+from .sam_parser import parse_sam_file, count_sam_alignments, same_genome
 from .celery_worker import celery_app, run_pipeline_task
 
 logging.basicConfig(
@@ -94,6 +95,8 @@ class AlignmentRecord(BaseModel):
     target_transcript: str
     gene_id: Optional[str] = None
     mismatches: int
+    substitutions: Optional[int] = None
+    bulges: Optional[int] = None
     position: int
     strand: str
     species: Optional[str] = None
@@ -468,7 +471,8 @@ async def create_job(
     species: str = Form("human"),
     probe_length: int = Form(36),
     max_mismatches: int = Form(2),
-    kmer_length: int = Form(18),
+    max_bulges: int = Form(0),
+    kmer_length: int = Form(16),
     gene_sequence: str = Form(""),
     probe_sequence: str = Form(""),
     microbiomes: str = Form(""),
@@ -505,7 +509,22 @@ async def create_job(
             status_code=400,
             detail="Probe length must be between 20 and 50 bp"
         )
-    
+    if max_bulges < 0 or max_bulges > 2:
+        raise HTTPException(
+            status_code=400,
+            detail="Max bulges must be a whole number from 0 to 2 (inclusive)."
+        )
+    if max_mismatches < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Max mismatches must be a whole number of 0 or greater."
+        )
+    if kmer_length < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="K-mer length must be a whole number of 0 or greater."
+        )
+
     if len(provided) > 1:
         raise HTTPException(
             status_code=400,
@@ -646,6 +665,7 @@ async def create_job(
         'microbiomes': microbiomes,
         'probe_length': probe_length,
         'max_mismatches': max_mismatches,
+        'max_bulges': max_bulges,
         'kmer_length': kmer_length,
         'job_id': job_id,
         'input_type': input_type,
@@ -659,14 +679,15 @@ async def create_job(
         'microbe_mode': (mode or "").lower() == "microbe",
     }
     
+    submitted_at = datetime.utcnow().isoformat() + "Z"
+    pipeline_args['submitted_at'] = submitted_at
+
     try:
         task = run_pipeline_task.apply_async(
             kwargs=pipeline_args,
             task_id=job_id
         )
-        
-        submitted_at = datetime.utcnow().isoformat() + "Z"
-        
+
         jobs[job_id] = {
             "submitted_at": submitted_at,
             "input_type": input_type,
@@ -695,8 +716,9 @@ async def create_job(
 
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
-def get_job(job_id: str):
+def get_job(job_id: str, response: Response):
     """Get job status and information."""
+    response.headers["Cache-Control"] = "no-store"
     try:
         uuid.UUID(job_id)
     except ValueError as e:
@@ -722,29 +744,62 @@ def get_job(job_id: str):
             }
         else:
             info = {}
+        # The Celery/Redis result is ephemeral (expires, and is lost if Redis
+        # restarts), which would leave a finished job stuck showing PENDING. If
+        # the job completed on disk, trust that over the missing result.
+        if state not in ['SUCCESS', 'FAILURE']:
+            _log = ROOT / "output" / "alignments" / job_id / "pipeline_log.txt"
+            if _log.exists():
+                try:
+                    _tail = _log.read_text(errors='ignore')[-4000:]
+                except OSError:
+                    _tail = ""
+                if "PIPELINE COMPLETED SUCCESSFULLY" in _tail:
+                    state = 'SUCCESS'
+                    if not isinstance(info, dict):
+                        info = {}
+        # Durable timestamps written by the worker (survive Redis loss/expiry).
+        job_meta = {}
+        _meta_path = ROOT / "output" / "alignments" / job_id / "job_meta.json"
+        if _meta_path.exists():
+            try:
+                with open(_meta_path, encoding="utf-8") as _mf:
+                    job_meta = json.load(_mf) or {}
+            except (OSError, ValueError):
+                job_meta = {}
+
         if state in ['SUCCESS', 'FAILURE']:
             job_dir = ROOT / "output" / "alignments" / job_id
             log_file = job_dir / "pipeline_log.txt"
-            
+
             if log_file.exists():
                 stats = parse_pipeline_stats(log_file)
                 info["stats"] = stats
-        
-        submitted_at = "unknown"
+            # completed_at lives only in the (ephemeral) Celery result; recover it
+            # from job_meta.json, then the pipeline log's mtime, so the UI still
+            # shows a completion time after a restart/expiry.
+            if not info.get("completed_at"):
+                info["completed_at"] = job_meta.get("completed_at") or (
+                    datetime.fromtimestamp(log_file.stat().st_mtime).isoformat() + "Z"
+                    if log_file.exists() else None)
+
+        submitted_at = job_meta.get("submitted_at") or "unknown"
         input_type = "unknown"
-        
+
         if job_id in jobs:
             jobs[job_id]["status"] = state
-            submitted_at = jobs[job_id].get("submitted_at", "unknown")
+            if submitted_at == "unknown":
+                submitted_at = jobs[job_id].get("submitted_at", "unknown")
             input_type = jobs[job_id].get("input_type", "unknown")
         else:
             job_dir = ROOT / "output" / "alignments" / job_id
             if job_dir.exists():
-                try:
-                    submitted_at = datetime.fromtimestamp(job_dir.stat().st_ctime).isoformat() + "Z"
-                except (KeyError, ValueError, TypeError):
-                    submitted_at = "unknown"
-                    logger.exception("Failed to get submission time for job %s", job_id)
+                if submitted_at == "unknown":
+                    try:
+                        submitted_at = datetime.fromtimestamp(job_dir.stat().st_ctime).isoformat() + "Z"
+                    except (KeyError, ValueError, TypeError):
+                        submitted_at = "unknown"
+                        logger.exception("Failed to get submission time for job %s", job_id)
 
                 if (job_dir / f"{job_id}_pasted_gene.fasta").exists() or any(f.startswith(job_id) and 'gene' in f for f in os.listdir(GENE_SEQUENCES_DIR) if os.path.isfile(GENE_SEQUENCES_DIR / f)):
                     input_type = "gene_sequence"
@@ -755,7 +810,7 @@ def get_job(job_id: str):
             else:
                 raise HTTPException(status_code=404, detail="Job not found")
             
-        info["species"] = jobs[job_id].get("species", "unknown")
+        info["species"] = jobs.get(job_id, {}).get("species", "unknown")
         return {
             "job_id": job_id,
             "status": state,
@@ -782,12 +837,17 @@ def parse_pipeline_stats(log_path):
         "gc_passed": None,
         "gc_rejected": None,
         "tm_rejected": None,
-        "homopolymer_rejected": None
+        "homopolymer_rejected": None,
+        "max_bulges": 0
     }
 
     try:
         with open(log_path, 'r', encoding='utf-8') as f:
             content = f.read()
+
+        match = re.search(r'Max bulges:\s*(\d+)', content)
+        if match:
+            stats["max_bulges"] = int(match.group(1))
 
         match = re.search(r'Input probes:\s*([\d,]+)', content)
         if match:
@@ -930,12 +990,14 @@ def get_job_alignments(
         }
     
     src_gene, src_transcripts = _load_job_source(job_dir)
+    genome_self_match = _load_job_genome_self_match(job_dir)
 
     if probe_id is not None:
         try:
             alignments = parse_sam_file(
                 str(sam_file), probe_id_filter=probe_id,
                 source_gene=src_gene, source_transcripts=src_transcripts,
+                genome_self_match=genome_self_match,
             )
             return {
                 "job_id": job_id,
@@ -957,9 +1019,11 @@ def get_job_alignments(
         alignments = parse_sam_file(
             str(sam_file), offset=offset, limit=page_size, mismatch_filter=mismatch,
             source_gene=src_gene, source_transcripts=src_transcripts,
+            genome_self_match=genome_self_match,
         )
         total_count = count_sam_alignments(
             str(sam_file), source_gene=src_gene, source_transcripts=src_transcripts,
+            genome_self_match=genome_self_match,
         )
         total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 0
         return {
@@ -992,6 +1056,21 @@ def _load_job_source(job_dir) -> tuple:
         return None, []
 
 
+def _load_job_genome_self_match(job_dir) -> bool:
+    """Whether the job used probe-id<->genome-id self matching (microbiome
+    probe-input). When true, off-target views drop alignments to a probe's own
+    genome (rname belongs to the probe's genome)."""
+    src_path = job_dir / "source_info.json"
+    if not src_path.exists():
+        return False
+    try:
+        import json as _json
+        with open(src_path, 'r', encoding='utf-8') as fh:
+            return bool(_json.load(fh).get('genome_self_match'))
+    except (OSError, ValueError):
+        return False
+
+
 def _gc_percent(seq: str) -> str:
     if not seq:
         return ''
@@ -1002,11 +1081,50 @@ def _gc_percent(seq: str) -> str:
     return f"{(gc / len(clean)) * 100:.1f}%"
 
 
+def _load_probe_risk_levels(job_dir):
+    """Map probe_id -> risk label for probes that failed because of off-target
+    alignments (high risk, or medium risk from 1-2 mismatches). Probes that
+    failed k-mer analysis, safe probes and no-alignment probes are omitted."""
+    gff3 = job_dir / "probes.gff3"
+    labels = {}
+    if not gff3.exists():
+        return labels
+    try:
+        with open(gff3, 'r', encoding='utf-8') as fh:
+            for line in fh:
+                if not line or line.startswith('#'):
+                    continue
+                cols = line.rstrip('\n').split('\t')
+                if len(cols) < 9:
+                    continue
+                attrs = {}
+                for kv in cols[8].split(';'):
+                    i = kv.find('=')
+                    if i > 0:
+                        attrs[kv[:i]] = kv[i + 1:]
+                pid = attrs.get('ID')
+                risk = attrs.get('risk_level')
+                desc = (attrs.get('description') or '').lower()
+                if not pid:
+                    continue
+                if risk == 'high_risk':
+                    labels[pid] = 'High risk'
+                elif risk == 'medium_risk' and 'k-mer' not in desc:
+                    labels[pid] = 'Medium risk (mismatch)'
+    except OSError:
+        logger.warning("Failed to read probes.gff3 at %s", gff3)
+    return labels
+
+
 @app.get("/jobs/{job_id}/alignments/download")
-def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(None, ge=0)):
+def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(None, ge=0),
+                                risk_report: bool = Query(False)):
     """
     Stream all parsed alignments as a TSV. Used by the UI's 'download full
     alignments' button so the browser doesn't have to hold the full set in memory.
+
+    When risk_report=true, restrict rows to medium-risk (mismatch) and high-risk
+    probes (k-mer / safe / no-alignment probes excluded).
     """
     try:
         uuid.UUID(job_id)
@@ -1026,10 +1144,12 @@ def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(Non
     headers = [
         'Probe ID', 'Probe Sequence', 'GC%', 'Target Sequence',
         'Target Transcript', 'Gene ID', 'Species',
-        'Mismatches', 'Position', 'Strand'
+        'Mismatches', 'Bulges', 'Position', 'Strand'
     ]
 
     src_gene, src_transcripts = _load_job_source(job_dir)
+    genome_self_match = _load_job_genome_self_match(job_dir)
+    risk_map = _load_probe_risk_levels(job_dir) if risk_report else None
 
     def row_iter():
         yield '\t'.join(headers) + '\n'
@@ -1037,11 +1157,16 @@ def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(Non
             alignments = parse_sam_file(
                 str(sam_file), mismatch_filter=mismatch,
                 source_gene=src_gene, source_transcripts=src_transcripts,
+                genome_self_match=genome_self_match,
             )
         except Exception:
             logger.exception("Failed to parse alignments for download (job %s)", job_id)
             return
         for a in alignments:
+            pid = a.get('probe_id') or ''
+            if risk_map is not None:
+                if pid not in risk_map and pid.split('|')[0].strip() not in risk_map:
+                    continue
             probe_seq = (a.get('sequence') or '').upper().replace('-', '')
             target = a.get('target_transcript') or ''
             gene_id = a.get('gene_id') or ''
@@ -1060,14 +1185,18 @@ def download_job_alignments_tsv(job_id: str, mismatch: Optional[int] = Query(Non
                 target,
                 gene_id,
                 species,
-                str(a.get('mismatches') if a.get('mismatches') is not None else ''),
+                str(a.get('substitutions') if a.get('substitutions') is not None else (a.get('mismatches') if a.get('mismatches') is not None else '')),
+                str(a.get('bulges') if a.get('bulges') is not None else ''),
                 str(a.get('position') if a.get('position') is not None else ''),
                 a.get('strand') or '',
             ]
             yield '\t'.join(row) + '\n'
 
-    suffix = 'all' if mismatch is None else f'mm{mismatch}'
-    filename = f'probe_alignments_{suffix}.tsv'
+    if risk_report:
+        filename = 'medium_high_risk_report.tsv'
+    else:
+        suffix = 'all' if mismatch is None else f'mm{mismatch}'
+        filename = f'probe_alignments_{suffix}.tsv'
     return StreamingResponse(
         row_iter(),
         media_type='text/tab-separated-values',
@@ -1114,6 +1243,7 @@ def get_offtarget_summary(job_id: str, top_n: int = Query(OFFTARGET_TOP_N_DEFAUL
     source_gene, source_transcripts_list = _load_job_source(job_dir)
     source_transcripts = set(source_transcripts_list)
     source_transcripts_versionless = {t.split('.', 1)[0] for t in source_transcripts}
+    genome_self_match = _load_job_genome_self_match(job_dir)
 
     sp_pattern = re.compile(r'\tSP:Z:([^\t\n]+)')
     counts: Dict[str, int] = {}
@@ -1161,9 +1291,11 @@ def get_offtarget_summary(job_id: str, top_n: int = Query(OFFTARGET_TOP_N_DEFAUL
                     key = rname if rname and rname != '*' else None
                 if key is None:
                     continue
-                # Skip self-alignments to the source gene/transcript.
+                # Skip self-alignments to the source gene/transcript, or (for
+                # microbiome probe-input) to the probe's own genome.
                 rname_base = rname.split('.', 1)[0] if rname else ''
                 is_self = (
+                    (genome_self_match and same_genome(qname, rname)) or
                     (source_gene and key == source_gene) or
                     (rname and rname in source_transcripts) or
                     (rname_base and rname_base in source_transcripts_versionless)

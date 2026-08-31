@@ -39,8 +39,26 @@ celery_app.conf.update(
 ROOT = Path(__file__).resolve().parent.parent
 
 
+def _write_job_meta(output_dir, submitted_at, completed_at, execution_time, status):
+    """Persist submission/completion timestamps next to the job outputs so the
+    API can report accurate times after the ephemeral Redis result is gone."""
+    import json
+    try:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with open(output_dir / "job_meta.json", "w", encoding="utf-8") as f:
+            json.dump({
+                "submitted_at": submitted_at or None,
+                "completed_at": completed_at,
+                "execution_time": execution_time,
+                "status": status,
+            }, f)
+    except OSError:
+        logger.exception("Failed to write job_meta.json in %s", output_dir)
+
+
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=18, microbiomes="", align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False):
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=16, max_bulges=0, microbiomes="", align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False, submitted_at=""):
     """
     Run the probe design pipeline.
     
@@ -89,6 +107,7 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             "--species", species,
             "--kmer-length", str(kmer_length),
             "--max-mismatches", str(max_mismatches),
+            "--max-bulges", str(max_bulges),
             "--task-id", job_id,
         ]
         cmd.extend(["--tm-range", tm_range])
@@ -161,13 +180,16 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
         execution_time = (end_time - start_time).total_seconds()
         logger.info("Job %s completed successfully in %.2fs", job_id, execution_time)
 
-        
+        completed_at = end_time.isoformat() + 'Z'
+        # Persist timestamps to disk so the UI still shows accurate submitted /
+        # completed times after the (ephemeral) Redis result is gone.
+        _write_job_meta(output_dir, submitted_at, completed_at, execution_time, 'completed')
 
         return {
             'status': 'completed',
             'job_id': job_id,
             'execution_time': execution_time,
-            'completed_at': end_time.isoformat() + 'Z',
+            'completed_at': completed_at,
             'output_dir': str(output_dir)
         }
         
@@ -176,13 +198,16 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
 
         end_time = datetime.utcnow()
         execution_time = (end_time - start_time).total_seconds()
-        
+        completed_at = end_time.isoformat() + 'Z'
+        _write_job_meta(ROOT / "output" / "alignments" / job_id,
+                        submitted_at, completed_at, execution_time, 'failed')
+
         return {
             'status': 'failed',
             'job_id': job_id,
             'error': str(e),
             'execution_time': execution_time,
-            'completed_at': end_time.isoformat() + 'Z'
+            'completed_at': completed_at
         }
 
 

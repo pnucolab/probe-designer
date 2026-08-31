@@ -32,7 +32,7 @@
   // are useful — drop the others. In host mode all organisms are eligible.
   $: visibleHosts = mode === 'microbe'
     ? organisms.hosts.filter(h => h.microbiomes && h.microbiomes.length > 0)
-    : organisms.hosts;
+    : organisms.hosts.filter(h => h.has_genome !== false);
 
   // If the user switches to microbial mode while currently on a host that
   // has no microbiomes (e.g. zebrafish), bounce them to the first valid one.
@@ -40,48 +40,87 @@
         && !visibleHosts.some(h => h.id === species)) {
     species = visibleHosts[0].id;
   }
-  const defaultGeneSequence = `>transcript:ENSB:3PgobK0mHtDbpdO CDS=1-37686
-ATGAAGGGTTCCGACGGCACCTCGCCGCGCACCACGGACGCGCCGATCGCGGTCGTCGGA
-CTGTCCTGCCGCCTTCCCGGAGCACCCGACCCCGCCACGTTCCGGCAACTGCTCCTCGAC
-GGCGCCGACGCCATTACGGAGGCCCCCGAGGGACTGTGGGGAATGGGCACGGACGCGGAC
-CTCGGCCGCCGGGGCGGATTCCTGGACCGGGACCGGATCGACCACTTCGACGCCGCCTTC
-TTCGGCATATCGCCACGCGAGGCCGCGGCCATGGACCCCCAGCAGCGCCTGACCCTGGAA
-CTGACCTGGGAGGCCCTCGAAGACGCCGGAATCATTCCGGACCGGCTCCGCGACAGCCGT
-ACCGGCGTGTACATCGGAGTGATCGCGGACGACTACGCCACCCTGATCCGCCGGGGCGGC
-CCGGCGGCCATCGACCGGCACAGCTTCACCGGACTCCACCGCGGCATCATCGCCAACCGC
-GTCTCCTACCACCTCGGCCTGCGCGGCCCCAGCCTCACCCTCGACGCCGGCCAGGCATCA
-TCGCTGGCGGCCATCCACCTGGCCTGCGAAAGCATCCGCCGCGGCGAGACGTCCCTCGCG
-TCGCTGGCGGCCATCCACCTGGCCTGCGAAAGCATCCGCCGCGGCGAGACGTCCCTCGCG
-ATCGCCGGCGGTGTCCATCTCAACCTCGCCGTCGAAAGCGGCGTCAGCGCAGAGCGGTTC
-GGCGGTCTGTCGCCGGACGGCGTCACCTACACCTTCGACGCCCGCGCCAATGGCTTCGTA
-CGCGGCGAGGGCGGCGGCGCCGTCGTCCTCAAGCCCCTCGCCGACGCCCTCGCCGACGGG
-GACGCCGTGTACTGCGTCATCCGCGGCAGCGCGCTCAACAACGACGGTGGCGGGGACCAC
-CTCACCACGCCCCACCAGGCCGCCCAGGAGGACCTCCTGCGGCGCGCCTACCGGCAGGCC
-GGAGTCGACCCCGCCCGGGTCCAGTACGTGGAACTCCACGGCACCGGAACGAAGGTCGGC
-GACCCGATCGAGGCCGCCGCCCTGGGCGAGGTGCTGGGCGCGGCCCGGCGGCCCACGGAT
-GCCCCGCTGCTGGTGGGGTCGGCCAAGACCAACGTGGGCCATCTGGAGGGCGCGGCCGGT
-GTCGTCGGCTTCATCAAGACGGCCCTGGGTCTCAAGCACGGCGAACTCTTCCCCAGCCTC`;
+  const defaultGeneSequence = `>MGYG000000001_1
+CATAACATTTCTTTTCTTATAAATAAATTAATGGGTAAAAATGACTCTTTAGCTAAAATA
+AAAGAACTAGTATTTGGATAAAATTTACAAATACTAGTCACTATGGGTCTATTTTTTTGC
+AAAAAATATTTTACTTTATTTGGAAATTAAATTTAACTAGCACAATAGATTAATATATAT
+AATTTTTTTATAACAGAGGAGATAGTAGTCTAGAAATAGCTTCTTTTATTTTGATAGATC
+TAGCTCTAGAGTTGTACATTTCAATAGTCATTGATTTAGAGTTAGTAATATCTTTTTCAA
+ATATTAGTCTTTGTTTTTTAGAAACATCTTCAGAATAGATAAAAGCATTTACTTCAAAAT
+TAAGTTCAAAACTTCTAATATCCATATTGGCAGTTCCTATAGAACAAATAGAATCATCGA
+TAACTATAGTTTTCGCATGTAAGAAAGCATCATCGCCATAAGTATAAATTTTAGCACCAA
+ATTTTAATAATTCTCCTGCATAAGAACAAGATGCCCAGTATACAAATGGATGGTCTGGCT
+TAGATGGTATCATGATTCTTACATCAACACCAGACAAACATGCTATTTTTAATGAATCAA
+TTAGAGTTCTATCTAAAATAAGGTACGGGCTTTGTATATATATATATTTTCTAGCTTTTT
+GTATCATCTTAATATAGCCATATTTAATTTCATCTAATTCAGTTATATCCGGTCCACTAG
+AAACAATTTGAATTCCAACATTGCTAGATGAATCATTGTAGTATATGTTAGATGTTTGGT
+AGTCATTAAAGTACTTAGCTAAGTCAAGATTTTCTTTAGTTGTGTATCTCCAATCTAAAA
+TAAATCTTGTATTAAGATCAATAACAGACCCACCTGTAAGTCTTAAATGAGTGTCTCGCC
+ATTCTCCAAACTTAGGATCCTTTCCTAAATATTCATCACCTACATTATTTCCTCCGACAA
+ATGCTACATTACCGTCAATTACAACAATTTTACGGTGATTTCTATAATTTAAATTGAAAT
+TGACTATTTTAAGTAGAGAAGGGAAGAATGCTCCAGTTTTTACACCATTCTTTTTTAATT
+TTATTAAAGTTTTATCTGAAAGTAGTCTACTACCAACTGAATCATATAAAAGTCTAACTT
+CAACTCCACTTTTAGCTTTTTCAATAAGAATATCGATTATTTGATTTCCAATATTATCAT
+CTTTGAAAATATAAAATTGTATATTTATATAACTTTTAGCATTTTTTAACTCAAATAAAA
+GGGAATCAAAGAAATCTTTAGAACGATCATAAATATTAACACTATTATTATTAGTGTAAT
+GAGCACTATTTGAATTAGTAAGAGCATCTATCATATCTATATTATTTTTTAAATTTTCAT
+CATGCATAGATGAATACTTTAATATATCTTTTGTTTTAGATATGTTTTCTTTTATAATTT
+CATCTTCTTGCTCTTTTATTTTAAACATATTATCTTTTGCTACACCTCGGCCAACTAACA
+TATATAATATAAATCCTCCGGCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACTATTG
+TTTCTATACTTCTTTTTTCTTTAAATATAAGAATTAGAATAACAATGAAGTTGATTATAT
+ATATAGATGTAGCGATAATTTCATAAGCCGAGTACTCTAAAAATGATAACAATGAAGCAC
+CTCCTATATTTTGTGATTTATTCTATTATATAAAATAAATCAATAATAAAAAAGGACAAA`;
 
-  const defaultProbeSequence = `>probe_0|start=1|end=20|transcript:ENSB:3PgobK0mHtDbpdO
-ATGAAGGGTTCCGACGGCAC
->probe_1|start=97|end=116|transcript:ENSB:3PgobK0mHtDbpdO
-ACGTTCCGGCAACTGCTCCT
->probe_2|start=100|end=119|transcript:ENSB:3PgobK0mHtDbpdO
-TTCCGGCAACTGCTCCTCGA
->probe_3|start=211|end=230|transcript:ENSB:3PgobK0mHtDbpdO
-GACCGGATCGACCACTTCGA
->probe_4|start=212|end=231|transcript:ENSB:3PgobK0mHtDbpdO
-ACCGGATCGACCACTTCGAC
->probe_5|start=223|end=242|transcript:ENSB:3PgobK0mHtDbpdO
-CACTTCGACGCCGCCTTCTT
->probe_6|start=224|end=243|transcript:ENSB:3PgobK0mHtDbpdO
-ACTTCGACGCCGCCTTCTTC
->probe_7|start=230|end=249|transcript:ENSB:3PgobK0mHtDbpdO
-ACGCCGCCTTCTTCGGCATA
->probe_8|start=231|end=250|transcript:ENSB:3PgobK0mHtDbpdO
-CGCCGCCTTCTTCGGCATAT
->probe_9|start=232|end=251|transcript:ENSB:3PgobK0mHtDbpdO
-GCCGCCTTCTTCGGCATATC`;
+  const defaultProbeSequence = `>probe_6|start=504|end=539|MGYG000000001_1
+GAACAAGATGCCCAGTATACAAATGGATGGTCTGGC
+>probe_7|start=505|end=540|MGYG000000001_1
+AACAAGATGCCCAGTATACAAATGGATGGTCTGGCT
+>probe_8|start=506|end=541|MGYG000000001_1
+ACAAGATGCCCAGTATACAAATGGATGGTCTGGCTT
+>probe_14|start=512|end=547|MGYG000000001_1
+TGCCCAGTATACAAATGGATGGTCTGGCTTAGATGG
+>probe_15|start=513|end=548|MGYG000000001_1
+GCCCAGTATACAAATGGATGGTCTGGCTTAGATGGT
+>probe_25|start=864|end=899|MGYG000000001_1
+ACAGACCCACCTGTAAGTCTTAAATGAGTGTCTCGC
+>probe_26|start=865|end=900|MGYG000000001_1
+CAGACCCACCTGTAAGTCTTAAATGAGTGTCTCGCC
+>probe_27|start=866|end=901|MGYG000000001_1
+AGACCCACCTGTAAGTCTTAAATGAGTGTCTCGCCA
+>probe_28|start=867|end=902|MGYG000000001_1
+GACCCACCTGTAAGTCTTAAATGAGTGTCTCGCCAT
+>probe_29|start=868|end=903|MGYG000000001_1
+ACCCACCTGTAAGTCTTAAATGAGTGTCTCGCCATT
+>probe_44|start=888|end=923|MGYG000000001_1
+TGAGTGTCTCGCCATTCTCCAAACTTAGGATCCTTT
+>probe_46|start=890|end=925|MGYG000000001_1
+AGTGTCTCGCCATTCTCCAAACTTAGGATCCTTTCC
+>probe_47|start=891|end=926|MGYG000000001_1
+GTGTCTCGCCATTCTCCAAACTTAGGATCCTTTCCT
+>probe_63|start=1510|end=1545|MGYG000000001_1
+TAAATCCTCCGGCAGGAAGAATAGTCAGAACTGCAG
+>probe_64|start=1511|end=1546|MGYG000000001_1
+AAATCCTCCGGCAGGAAGAATAGTCAGAACTGCAGT
+>probe_65|start=1512|end=1547|MGYG000000001_1
+AATCCTCCGGCAGGAAGAATAGTCAGAACTGCAGTC
+>probe_66|start=1513|end=1548|MGYG000000001_1
+ATCCTCCGGCAGGAAGAATAGTCAGAACTGCAGTCC
+>probe_67|start=1514|end=1549|MGYG000000001_1
+TCCTCCGGCAGGAAGAATAGTCAGAACTGCAGTCCA
+>probe_68|start=1515|end=1550|MGYG000000001_1
+CCTCCGGCAGGAAGAATAGTCAGAACTGCAGTCCAT
+>probe_69|start=1516|end=1551|MGYG000000001_1
+CTCCGGCAGGAAGAATAGTCAGAACTGCAGTCCATG
+>probe_70|start=1517|end=1552|MGYG000000001_1
+TCCGGCAGGAAGAATAGTCAGAACTGCAGTCCATGC
+>probe_71|start=1518|end=1553|MGYG000000001_1
+CCGGCAGGAAGAATAGTCAGAACTGCAGTCCATGCA
+>probe_72|start=1519|end=1554|MGYG000000001_1
+CGGCAGGAAGAATAGTCAGAACTGCAGTCCATGCAA
+>probe_73|start=1520|end=1555|MGYG000000001_1
+GGCAGGAAGAATAGTCAGAACTGCAGTCCATGCAAC
+>probe_74|start=1521|end=1556|MGYG000000001_1
+GCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACT`;
 
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
@@ -95,8 +134,12 @@ GCCGCCTTCTTCGGCATATC`;
     alignMicrobiome = false;
     selectedMicrobiomes = [];
   }
+  $: if (mode === 'microbe' && currentHost && currentHost.has_genome === false) {
+    alignHost = false;
+  }
   let probe_length = '';
   let max_mismatches = '';
+  let max_bulges = '';
   let tmRange = '';
   let gcRange = '';
   let uploading = false;
@@ -126,9 +169,37 @@ GCCGCCTTCTTCGGCATATC`;
 
     console.log('Sequence to submit (first 100 chars):', sequenceToSubmit.substring(0, 100));
 
-    if (probe_length !== '' && (probe_length < 20 || probe_length > 50)) {
-      error = 'Probe length must be between 20 and 50 bp';
-      return;
+    if (probe_length !== '' && probe_length != null) {
+      const pl = Number(probe_length);
+      if (!Number.isInteger(pl)) {
+        error = 'Probe length must be a whole number of base pairs (no negative or fractional values).';
+        return;
+      }
+      if (pl < 20 || pl > 50) {
+        error = 'Probe length must be between 20 and 50 bp';
+        return;
+      }
+    }
+    if (kmerLength !== '' && kmerLength != null) {
+      const kl = Number(kmerLength);
+      if (!Number.isInteger(kl) || kl < 0) {
+        error = 'K-mer length must be a whole number of 0 or greater (no negative or fractional values).';
+        return;
+      }
+    }
+    if (max_bulges !== '' && max_bulges != null) {
+      const mb = Number(max_bulges);
+      if (!Number.isInteger(mb) || mb < 0 || mb > 2) {
+        error = 'Max bulges must be a whole number from 0 to 2. Only 0, 1 or 2 is possible.';
+        return;
+      }
+    }
+    if (max_mismatches !== '' && max_mismatches != null) {
+      const mm = Number(max_mismatches);
+      if (!Number.isInteger(mm) || mm < 0) {
+        error = 'Max mismatches must be a whole number of 0 or greater (no negative or fractional values).';
+        return;
+      }
     }
     if (tmRange !== '') {
       const parts = tmRange.split('-').map(s => parseFloat(s.trim()));
@@ -290,8 +361,9 @@ GCCGCCTTCTTCGGCATATC`;
     if (inputType === 'gene') {
       form.append('probe_length', String(probe_length || 36));
     }
-    form.append('kmer_length', String(kmerLength || 18));
+    form.append('kmer_length', String(kmerLength || 16));
     form.append('max_mismatches', String(max_mismatches === '' || max_mismatches == null ? 2 : max_mismatches));
+    form.append('max_bulges', String(max_bulges === '' || max_bulges == null ? 0 : max_bulges));
     form.append('tm_range', tmRange || '42-47');
     form.append('gc_range', gcRange || '40-80');
 
@@ -384,12 +456,14 @@ GCCGCCTTCTTCGGCATATC`;
             <div class="label-text">Select Target Transcriptome</div>
             <div style="border: 1px solid #d1d5db; border-radius: 6px; padding: 12px; margin-top: 4px; display: flex; flex-direction: column; gap: 6px;">
 
+              {#if currentHost?.has_genome}
               <label class="radio-label">
                 <input type="checkbox" bind:checked={alignHost}> {hostLabel}
                 {#if currentHost?.reference_url}
                   <a href={currentHost.reference_url} target="_blank" rel="noopener" style="margin-left: 4px; font-size: 12px; color: #3b82f6;">(source)</a>
                 {/if}
               </label>
+              {/if}
 
               {#if hostMicrobiomes.length > 0}
                 <label class="radio-label">
@@ -418,7 +492,7 @@ GCCGCCTTCTTCGGCATATC`;
         
         <div style="grid-column: 1 / -1;">
           <div class="label-text" style="color:#111827;">Probe Design</div>
-          <div style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; display: grid; grid-template-columns: repeat({inputType === 'gene' ? 3 : 2}, 1fr); gap: 16px; margin-top: 4px;">
+          <div style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; display: grid; grid-template-columns: repeat({inputType === 'gene' ? 4 : 3}, 1fr); gap: 16px; margin-top: 4px;">
             {#if inputType === 'gene'}
               <div>
                 <label for="probe_length" class="radio-label" style="display:block; margin-bottom:4px;">Probe Length (bp)</label>
@@ -427,11 +501,15 @@ GCCGCCTTCTTCGGCATATC`;
             {/if}
             <div>
               <label for="kmer_length" class="radio-label" style="display:block; margin-bottom:4px;">K-mer Length (bp)</label>
-              <input id="kmer_length" type="text" bind:value={kmerLength} placeholder="Default: 18" class="number-input" />
+              <input id="kmer_length" type="number" min="0" step="1" bind:value={kmerLength} placeholder="Default: 16" class="number-input" />
             </div>
             <div>
               <label for="max_mismatches" class="radio-label" style="display:block; margin-bottom:4px;">Max Mismatches</label>
-              <input id="max_mismatches" type="number" min="0" max="6" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />
+              <input id="max_mismatches" type="number" min="0" step="1" bind:value={max_mismatches} placeholder="Default: 2" class="number-input" />
+            </div>
+            <div>
+              <label for="max_bulges" class="radio-label" style="display:block; margin-bottom:4px;">Max Bulges</label>
+              <input id="max_bulges" type="number" min="0" max="2" step="1" bind:value={max_bulges} placeholder="Default: 0 (0–2 allowed)" class="number-input" />
             </div>
           </div>
         </div>

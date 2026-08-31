@@ -52,6 +52,15 @@ hosts:
         display_name: Human Vaginal Microbiome
         data_dir: data/human-vaginal-microbiome
         source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/human-vaginal-v1-0
+      # Custom catalog: when the species present in your samples are known
+      # (16S/shotgun profiling, or a defined community), put one FASTA per
+      # reference genome in `data_dir` and uncomment an entry like this. The
+      # run then screens only against organisms that are actually there
+      # instead of a whole public catalog. See README, "Custom catalog for a
+      # known community".
+      # - id: human-other-microbiome
+      #   display_name: Human Other Microbiome
+      #   data_dir: data/custom
 
   - id: mouse
     display_name: Mouse
@@ -67,6 +76,21 @@ hosts:
         display_name: Mouse Gut Microbiome
         data_dir: data/mouse-gut-microbiome
         source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/mouse-gut-v1-0
+      # - id: mouse-other-microbiome
+      #   display_name: Mouse Other Microbiome
+      #   data_dir: data/custom
+
+  # - id: soil
+  #   display_name: Soil
+  #   latin_binomial: null
+  #   ncbi_tax_id: null
+  #   transcript_id_prefixes: []
+  #   reference_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/soil-v1-0
+  #   microbiomes:
+  #     - id: soil-microbiome
+  #       display_name: Soil Microbiome
+  #       data_dir: data/soil-microbiome
+  #       source_url: https://www.ebi.ac.uk/metagenomics/genome-catalogues/soil-v1-0
 
   - id: zebrafish
     display_name: Zebrafish

@@ -42,15 +42,21 @@ class Host:
     latin_binomial: Optional[str]
     ncbi_tax_id: Optional[int]
     transcript_id_prefixes: tuple
-    genome_dir: str
-    genome_file_regex: str
-    transcript_chunks_dir: str
+    genome_dir: Optional[str]
+    genome_file_regex: Optional[str]
+    transcript_chunks_dir: Optional[str]
     reference_url: Optional[str]
     default: bool = False
     microbiomes: tuple = ()
 
     @property
-    def genome_file_pattern(self) -> re.Pattern:
+    def has_genome(self) -> bool:
+        return bool(self.genome_dir and self.genome_file_regex)
+
+    @property
+    def genome_file_pattern(self) -> Optional[re.Pattern]:
+        if not self.genome_file_regex:
+            return None
         return re.compile(self.genome_file_regex)
 
 
@@ -125,6 +131,7 @@ class Registry:
                     "display_name": h.display_name,
                     "latin_binomial": h.latin_binomial,
                     "default": h.default,
+                    "has_genome": h.has_genome,
                     "reference_url": h.reference_url,
                     "transcript_id_prefixes": list(h.transcript_id_prefixes),
                     "microbiomes": [
@@ -166,9 +173,9 @@ def _build_registry(data: dict) -> Registry:
             latin_binomial=raw.get("latin_binomial"),
             ncbi_tax_id=raw.get("ncbi_tax_id"),
             transcript_id_prefixes=tuple(raw.get("transcript_id_prefixes") or []),
-            genome_dir=raw["genome_dir"],
-            genome_file_regex=raw["genome_file_regex"],
-            transcript_chunks_dir=raw["transcript_chunks_dir"],
+            genome_dir=raw.get("genome_dir"),
+            genome_file_regex=raw.get("genome_file_regex"),
+            transcript_chunks_dir=raw.get("transcript_chunks_dir"),
             reference_url=raw.get("reference_url"),
             default=bool(raw.get("default", False)),
             microbiomes=microbiomes,

@@ -42,16 +42,26 @@ def parse_md_tag(md: str) -> List[tuple]:
     return mismatches
 
 
+def compute_alignment_diffs(cigar: str, md: str) -> tuple:
+    """
+    Split an alignment's differences into (substitutions, indel_bases).
+
+    Substitutions come from the MD tag; indel bases (insertions/deletions,
+    i.e. bulges) come from the CIGAR. razers3's NM:i tag drops some indels
+    (e.g. trailing deletions), so both are recomputed from CIGAR + MD.
+    """
+    md_subs = sum(1 for _, typ, _ in parse_md_tag(md) if typ == 'substitution')
+    indel_bases = sum(count for count, op in parse_cigar(cigar) if op in ('I', 'D'))
+    return md_subs, indel_bases
+
+
 def compute_edit_distance(cigar: str, md: str) -> int:
     """
     Compute true alignment edit distance from CIGAR + MD.
 
     Edit distance = #substitutions (from MD) + #inserted/deleted bases (from CIGAR).
-    razers3's NM:i tag drops some indels (e.g. trailing deletions), so trusting it
-    lets hits with more real differences than the user-set threshold slip through.
     """
-    md_subs = sum(1 for _, typ, _ in parse_md_tag(md) if typ == 'substitution')
-    indel_bases = sum(count for count, op in parse_cigar(cigar) if op in ('I', 'D'))
+    md_subs, indel_bases = compute_alignment_diffs(cigar, md)
     return md_subs + indel_bases
 
 
@@ -147,6 +157,19 @@ def reconstruct_reference_from_sam(sequence: str, cigar: str, md: str) -> str:
     return ''.join(result)
 
 
+def same_genome(probe_id, target):
+    """True if reference `target` belongs to the genome named by `probe_id`.
+
+    Mirror of core.probe_classifier.same_genome (kept local to avoid a
+    core<->backend import). Used for microbiome probe-input where the probe id
+    is the genome id used to name that genome's contigs, so self-alignments can
+    be excluded from the off-target views regardless of contig-header style.
+    """
+    if not probe_id or not target:
+        return False
+    return target == probe_id or target.startswith(probe_id + '_')
+
+
 def _is_self_alignment(rname, gene_label, source_gene, source_transcripts, source_transcripts_versionless):
     """Return True if this alignment row points at the source gene/transcript."""
     if source_gene and gene_label and gene_label == source_gene:
@@ -160,7 +183,8 @@ def _is_self_alignment(rname, gene_label, source_gene, source_transcripts, sourc
     return False
 
 
-def count_sam_alignments(sam_path: str, source_gene=None, source_transcripts=None) -> int:
+def count_sam_alignments(sam_path: str, source_gene=None, source_transcripts=None,
+                         genome_self_match=False) -> int:
     """
     Count number of unique alignments in SAM file (excluding headers).
     Dedupes by (qname, rname, pos, strand) so primary+secondary records of
@@ -197,6 +221,8 @@ def count_sam_alignments(sam_path: str, source_gene=None, source_transcripts=Non
                         pos = int(parts[4])
                     except (ValueError, IndexError):
                         continue
+                if genome_self_match and same_genome(qname, rname):
+                    continue
                 if (source_gene or source_transcripts) and _is_self_alignment(
                     rname, gene_label, source_gene, source_transcripts, source_transcripts_versionless
                 ):
@@ -209,7 +235,7 @@ def count_sam_alignments(sam_path: str, source_gene=None, source_transcripts=Non
         return 0
 
 
-def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_filter: int = None, probe_id_filter: str = None, source_gene=None, source_transcripts=None) -> List[Dict[str, Any]]:
+def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_filter: int = None, probe_id_filter: str = None, source_gene=None, source_transcripts=None, genome_self_match=False) -> List[Dict[str, Any]]:
     """
     Parse SAM file and extract alignment information with pagination support.
     Handles * sequences by tracking the last valid sequence per probe.
@@ -270,6 +296,8 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                 else:
                     sequence_cache[qname] = seq
 
+                if genome_self_match and same_genome(qname, rname):
+                    continue
                 if self_filter_active and _is_self_alignment(
                     rname, gene_id, source_gene, source_transcripts_set, source_transcripts_versionless
                 ):
@@ -296,7 +324,8 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                 if md is None:
                     continue
 
-                nm = compute_edit_distance(cigar, md)
+                substitutions, bulges = compute_alignment_diffs(cigar, md)
+                nm = substitutions + bulges
 
                 if mismatch_filter is not None and nm != mismatch_filter:
                     continue
@@ -314,6 +343,8 @@ def parse_sam_file(sam_path: str, offset: int = 0, limit: int = None, mismatch_f
                     'target_transcript': rname,
                     'gene_id': gene_id,
                     'mismatches': nm,
+                    'substitutions': substitutions,
+                    'bulges': bulges,
                     'position': pos,
                     'strand': strand,
                     'species': species

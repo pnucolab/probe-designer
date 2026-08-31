@@ -12,9 +12,9 @@ The Microbial Probe Designer Pipeline is a web-based application for designing a
 - FastAPI (Python web framework)
 - Celery (distributed task queue)
 - Redis (message broker)
-- RazerS3 (sequence alignment tool)
+- CUDA GPU + CuPy (sequence alignment; the pipeline is GPU-only)
+- Jellyfish (k-mer counting)
 - samtools (BAM processing)
-- gffread (transcript extraction)
 
 **Frontend:**
 - Svelte (reactive UI framework)
@@ -110,7 +110,7 @@ Workflow:
 For **Gene Sequence Input:**
 1. Generate tiled probes from gene sequence using [`core/generate_probes.py`](core/generate_probes.py)
 2. Apply GC content filtering (40-80%)
-3. Align probes against reference genome/transcriptome using RazerS3
+3. Align probes against reference genome/transcriptome using the GPU aligner
 4. Parse alignment results (SAM format) 
 5. Filter alignments by mismatch threshold
 6. **14-mer Safety Check** on non-aligned probes
@@ -129,7 +129,7 @@ For **Probe Sequence Input:**
 - Genome download and indexing (GENCODE via [`core/genome_downloader.py`](core/genome_downloader.py))
 - Probe generation with GC content filtering
 - **14-mer generation and safety analysis**
-- RazerS3 alignment execution with parallel processing
+- GPU alignment execution (RazerS3-compatible SAM output)
 - SAM file parsing and statistics
 - Gene annotation using cached transcript-to-gene mappings
 - **Cross-reactivity detection via k-mer matching**
@@ -215,7 +215,7 @@ New hosts or catalogs are added by editing `config/organisms.yml` — no code ch
 
 **Workflow:**
 1. **14-mer Generation:** Extract all possible 14-mers from each non-aligned probe
-2. **Parallel Alignment:** Align all 14-mers against reference genome using RazerS3
+2. **Parallel Alignment:** Align all 14-mers against reference genome on the GPU
 3. **Match Detection:** Identify probes containing 14-mers with genome matches
 4. **Risk Classification:** 
    - **Unsafe Probes:** Have one or more 14-mers matching the host genome
@@ -372,7 +372,7 @@ GATCGATCGATCGA   12-25      ENST00000345678.2            TUBB         54321
    - Build: [`backend/Dockerfile`](backend/Dockerfile)
    - Port: 8002 (internal)
    - Volumes: Code, data, output
-   - Dependencies: samtools, gffread, razers3
+   - Dependencies: samtools, Jellyfish, CUDA/CuPy (GPU aligner)
 
 3. **probe-designer-worker** - Celery worker
    - Build: [`backend/Dockerfile`](backend/Dockerfile)
@@ -435,7 +435,7 @@ docker-compose down
    - Generates probes (gene input) or reads probes (probe input)
    - Applies GC content filtering (40-80%)
 5. **Primary Alignment & Filtering:**
-   - Aligns probes using RazerS3 with parallel processing
+   - Aligns probes on the GPU (RazerS3-compatible SAM output)
    - Filters alignments by mismatch threshold
    - Annotates alignments with gene names (human/mouse) or species (microbiome)
 6. **14-mer Safety Analysis:**
@@ -580,7 +580,7 @@ GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCT
 
 **Pipeline Failures:**
 - Check genome download and decompression
-- Verify razers3 binary exists in `bin/` directory
+- Verify a CUDA GPU is visible to the worker (`nvidia-smi`) — the aligner is GPU-only
 - Review pipeline logs in `output/alignments/{job_id}/pipeline_log.txt`
 
 **14-mer Safety Check Issues:**
@@ -621,8 +621,8 @@ npm run dev
 
 **Dependencies:**
 - samtools (for BAM processing)
-- gffread (for transcript extraction)  
-- razers3 (alignment tool, in `bin/` directory)
+- Jellyfish (for k-mer counting)
+- A CUDA-capable GPU with CuPy (the aligner; there is no CPU fallback)
 
 ### Testing
 
@@ -655,7 +655,7 @@ python probe_designer.py --gene-sequence ">test\nATCGATCGATCGATCGATCGATCGATCGAT"
 ### Alignment Parameters
 
 - **Identity Threshold:** Calculated as `((probe_length - max_mismatches) / probe_length) * 100`
-- **RazerS3 Options:** 
+- **Aligner Options** (retained from the RazerS3-compatible interface): 
   - `-ng`: No gaps allowed
   - `-rr 100`: Report up to 100 alignments per probe
   - `-m 100`: Consider up to 100 matches

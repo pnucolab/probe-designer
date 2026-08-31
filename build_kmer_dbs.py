@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import os
+import shlex
 import subprocess
 import time
 
@@ -57,7 +58,15 @@ def build_db(genome_files, k, db_path, threads):
             flist.write(gf + '\n')
         file_list_path = flist.name
     try:
-        cmd = f"xargs cat < '{file_list_path}' | jellyfish count -m {k} -s 5G -t {threads} -C -o '{db_path}' /dev/fd/0"
+        # shell=True is required: this is a real shell pipeline feeding the
+        # concatenated genomes to Jellyfish through /dev/fd/0. Paths are passed
+        # through shlex.quote() instead of hand-written single quotes so that a
+        # path containing a quote cannot break out into arbitrary commands
+        # (db_path is derived from the --species CLI value).
+        cmd = (
+            f"xargs cat < {shlex.quote(file_list_path)} | jellyfish count "
+            f"-m {int(k)} -s 5G -t {int(threads)} -C -o {shlex.quote(db_path)} /dev/fd/0"
+        )
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=False)
         return proc.returncode == 0
     finally:

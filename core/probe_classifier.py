@@ -7,6 +7,20 @@ from collections import defaultdict
 from typing import Dict, Optional, Set
 
 
+def same_genome(probe_id: str, target: str) -> bool:
+    """True if reference `target` belongs to the genome named by `probe_id`.
+
+    For microbiome probe-input the probe FASTA id is the genome id used to name
+    that genome's contigs. Anchored on an underscore boundary so 'AC' matches
+    'AC_contig_1' but not 'ACX_contig_1', and 'MGYG000000001' matches
+    'MGYG000000001_2'. Keying off the probe id (instead of parsing the contig
+    name) keeps it agnostic to contig-header style across catalogs.
+    """
+    if not probe_id or not target:
+        return False
+    return target == probe_id or target.startswith(probe_id + '_')
+
+
 def infer_source_transcripts(sam_file, gene_mappings=None, is_microbiome=False):
     """
     Infer source transcript(s) and gene name from probe alignment patterns.
@@ -205,7 +219,8 @@ def resolve_source_from_header(header, gene_mappings):
 def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
                              source_transcripts: Optional[Set[str]] = None,
                              source_gene: Optional[str] = None,
-                             is_probe_input: bool = False) -> Dict:
+                             is_probe_input: bool = False,
+                             genome_self_match: bool = False) -> Dict:
     """
     Classify probes as safe or risky based on SAM alignments.
 
@@ -281,6 +296,28 @@ def classify_probes_from_sam(sam_file: str, is_microbiome: bool = False,
     results = {}
     for probe_id, data in probe_data.items():
         unique_gene_count = len(data['unique_genes'])
+
+        # Microbiome probe-input where the probe id names its own genome: an
+        # alignment is self iff its reference belongs to that genome. A probe is
+        # safe only when EVERY alignment is self; any cross-genome hit within
+        # tolerance makes it non-specific and off-target.
+        if genome_self_match:
+            cross = [mm for (t, _g, mm) in data['alignments']
+                     if not same_genome(probe_id, t)]
+            if not cross:
+                status = 'safe'
+                reported_mm = data['min_mm'] if data['min_mm'] != float('inf') else 0
+            else:
+                cross_mm = min(cross)
+                status = 'high_risk' if cross_mm <= 1 else 'medium_risk'
+                reported_mm = cross_mm
+            results[probe_id] = {
+                'status': status,
+                'total_alignments': data['total'],
+                'unique_genes': unique_gene_count,
+                'min_mismatches': reported_mm,
+            }
+            continue
 
         # Minimum mismatch among OFF-TARGET alignments only (i.e. hits that are
         # NOT to the source gene / its isoforms). The risk level and the

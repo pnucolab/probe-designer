@@ -8,6 +8,18 @@
   let status = null;
   let info = null;
   let submittedAt = null;
+
+  // Render a UTC ISO timestamp as a local-time HH:MM:SS (the browser knows the
+  // viewer's timezone, so this is correct for a user anywhere in the world).
+  function fmtLocal(iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '-';
+    const p = (n) => String(n).padStart(2, '0');
+    let h = d.getHours() % 12;
+    if (h === 0) h = 12;
+    return `${p(h)}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  }
   let files = [];
   let alignments = [];
   let loadingAlignments = true;
@@ -15,6 +27,8 @@
   const ALIGNMENT_PREVIEW_SIZE = 100;
   const ALIGNMENTS_PAGE_SIZE = 10;
   let alignmentsPage = 1;
+  let mismatchFilter = '';
+  let bulgesFilter = '';
   let error = null;
   let groupedAlignments = [];
   let sequenceLength = 0;
@@ -202,6 +216,14 @@
   $: offTargetNoun = offTargetGroupBy === 'species' ? 'species' : offTargetGroupBy;
   $: offTargetNounPlural = offTargetGroupBy === 'species' ? 'species' : offTargetGroupBy + 's';
 
+  // Probes with off-target k-mer matches = those k-mer-checked (non-aligned /
+  // self-aligned-safe) minus those that passed. This is the count reported by
+  // the k-mer match report, distinct from full-length SAM alignments.
+  $: kmerOffTargetProbes = Math.max(
+    0,
+    (info?.stats?.non_aligned_probes ?? 0) - (info?.stats?.safe_probes ?? 0)
+  );
+
   $: paginatedProbes = filteredSafeProbes.slice(
     (safeProbesPage - 1) * safeProbesPageSize,
     safeProbesPage * safeProbesPageSize
@@ -242,6 +264,14 @@
     return ((gcCount / cleanSeq.length) * 100).toFixed(1) + '%';
   }
 
+  function subsOf(aln) {
+    return aln.substitutions ?? aln.mismatches ?? 0;
+  }
+
+  function resetAlignmentPage() {
+    alignmentsPage = 1;
+  }
+
   function groupAlignmentsByProbe(alignments) {
     const groups = [];
     let currentGroup = null;
@@ -262,6 +292,8 @@
         target_transcript: aln.target_transcript,
         gene_id: aln.gene_id,
         mismatches: aln.mismatches,
+        substitutions: aln.substitutions,
+        bulges: aln.bulges,
         position: aln.position,
         strand: aln.strand,
         species: aln.species,
@@ -426,18 +458,21 @@
   
   if (isMicrobiome) {
     const perfectMatches = allProbeAlignments.filter(aln => aln.mismatches === 0);
-    if (perfectMatches.length === 1 && allProbeAlignments.length === 1) {
+    if (inputType === 'probe_sequence' && perfectMatches.length === 1 && allProbeAlignments.length === 1) {
       expandedProbeAlignments = []; // Safe - only self-alignment
     } else {
       expandedProbeAlignments = allProbeAlignments.map((aln) => ({
         target_transcript: aln.target_transcript,
         gene_id: aln.gene_id,
         mismatches: aln.mismatches,
+        substitutions: aln.substitutions,
+        bulges: aln.bulges,
         position: aln.position,
         strand: aln.strand,
         species: aln.species,
         sequence: aln.sequence,
-        gc_content: calculateGC(aln.sequence)
+        target_sequence: aln.target_sequence,
+        gc_content: calculateGC(aln.target_sequence || aln.sequence)
       }));
     }
   } else {
@@ -445,11 +480,14 @@
       target_transcript: aln.target_transcript,
       gene_id: aln.gene_id,
       mismatches: aln.mismatches,
+      substitutions: aln.substitutions,
+      bulges: aln.bulges,
       position: aln.position,
       strand: aln.strand,
       species: aln.species,
       sequence: aln.sequence,
-      gc_content: calculateGC(aln.sequence)
+      target_sequence: aln.target_sequence,
+      gc_content: calculateGC(aln.target_sequence || aln.sequence)
     }));
   }
 }
@@ -458,6 +496,16 @@
     } finally {
       loadingProbeAlignments = false;
     }
+  }
+
+  function reverseComplement(sequence) {
+    const complement = { A: 'T', T: 'A', G: 'C', C: 'G', N: 'N' };
+    return (sequence || '')
+      .toUpperCase()
+      .split('')
+      .reverse()
+      .map(base => complement[base] || 'N')
+      .join('');
   }
 
   async function fetchSafeProbes() {
@@ -493,6 +541,7 @@
               length: parseInt(parts[4]),
               complexity: parseFloat(parts[5]),
               sec_struct: parseFloat(parts[6]),
+              order_ready: parts[8] || reverseComplement(parts[1]),
             };
 
             probes.push(probe);
@@ -648,8 +697,15 @@
     }
   }
 
-  $: alignmentsTotalPages = Math.max(1, Math.ceil(alignments.length / ALIGNMENTS_PAGE_SIZE));
-  $: displayedAlignments = alignments.slice(
+  $: showBulges = Number(info?.stats?.max_bulges ?? 0) > 0;
+  $: mismatchOptions = [...new Set(alignments.map((a) => subsOf(a)))].sort((x, y) => x - y);
+  $: bulgeOptions = [...new Set(alignments.map((a) => a.bulges ?? 0))].sort((x, y) => x - y);
+  $: filteredAlignments = alignments.filter(
+    (a) => (mismatchFilter === '' || subsOf(a) === Number(mismatchFilter)) &&
+           (bulgesFilter === '' || (a.bulges ?? 0) === Number(bulgesFilter))
+  );
+  $: alignmentsTotalPages = Math.max(1, Math.ceil(filteredAlignments.length / ALIGNMENTS_PAGE_SIZE));
+  $: displayedAlignments = filteredAlignments.slice(
     (alignmentsPage - 1) * ALIGNMENTS_PAGE_SIZE,
     alignmentsPage * ALIGNMENTS_PAGE_SIZE
   );
@@ -661,7 +717,9 @@
 
   async function fetchStatus() {
     try {
-      const res = await fetch(`/jobs/${jobId}`);
+      // no-store so polling always sees the live status/completed_at rather than
+      // a cached response (otherwise the UI only updates on a manual refresh).
+      const res = await fetch(`/jobs/${jobId}`, { cache: 'no-store' });
       if (res.status === 404) {
         if (intervalId) {
           clearInterval(intervalId);
@@ -758,10 +816,11 @@
   function downloadFilteredProbes() {
     if (filteredSafeProbes.length === 0) return;
     const isFiltered = tmFilter.trim() !== '' || gcFilter.trim() !== '';
-    const headers = ['Probe ID', 'Sequence', 'Tm', 'GC%', 'Complexity', 'Sec. Struct'];
+    const headers = ['Probe ID', 'Sequence', 'Tm', 'GC%', 'Complexity', 'Sec. Struct', 'Order-Ready Seq'];
     const rows = filteredSafeProbes.map(p => [
       p.probe_id, p.sequence, p.tm.toFixed(1),
-      p.gc_content.toFixed(1), p.complexity.toFixed(2), p.sec_struct.toFixed(2)
+      p.gc_content.toFixed(1), p.complexity.toFixed(2), p.sec_struct.toFixed(2),
+      p.order_ready || reverseComplement(p.sequence)
     ].join('\t'));
     const tsv = [headers.join('\t'), ...rows].join('\n');
     const blob = new Blob([tsv], { type: 'text/tab-separated-values' });
@@ -785,8 +844,8 @@
       <tr>
         <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Job ID</th>
         <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Status</th>
-        <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Submitted at (UTC)</th>
-        <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Completed at (UTC)</th>
+        <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Submitted at</th>
+        <th style="text-align:left; border-bottom:1px solid #ddd; padding:12px 16px">Completed at</th>
       </tr>
     </thead>
     <tbody>
@@ -814,8 +873,8 @@
             {/if}
           </div>
         </td>
-        <td style="padding:12px 16px; vertical-align:top">{submittedAt ? submittedAt.split('T')[1].split('.')[0] : '-'}</td>
-        <td style="padding:12px 16px; vertical-align:top">{info && info.completed_at ? info.completed_at.split('T')[1].split('.')[0] : '-'}</td>
+        <td style="padding:12px 16px; vertical-align:top">{fmtLocal(submittedAt)}</td>
+        <td style="padding:12px 16px; vertical-align:top">{fmtLocal(info && info.completed_at)}</td>
       </tr>
     </tbody>
   </table>
@@ -1046,9 +1105,10 @@
               <table style="width:100%; border-collapse:collapse; font-size:12px;">
                 <thead>
                   <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
-                    <th style="padding:10px; text-align:left;">Probe ID</th>
-                    <th style="padding:10px; text-align:left;">Sequence</th>
-                    <th style="padding:10px; text-align:center; position:relative;">
+                    <th style="padding:10px; text-align:left; vertical-align:top;">Probe ID</th>
+                    <th style="padding:10px; text-align:left; vertical-align:top;">Target Sequence</th>
+                    <th style="padding:10px; text-align:left; vertical-align:top;">Probe Sequence</th>
+                    <th style="padding:10px; text-align:center; position:relative; vertical-align:top;">
                       <div style="margin-bottom:4px;">Tm (°C)</div>
                       <input
                         type="text"
@@ -1058,7 +1118,7 @@
                         style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white; box-sizing:border-box;"
                       />
                     </th>
-                    <th style="padding:10px; text-align:center; position:relative;">
+                    <th style="padding:10px; text-align:center; position:relative; vertical-align:top;">
                       <div style="margin-bottom:4px;">GC%</div>
                       <input
                         type="text"
@@ -1068,8 +1128,8 @@
                         style="width:100%; padding:2px 4px; border:1px solid #d1d5db; border-radius:3px; font-size:11px; background:white; box-sizing:border-box;"
                       />
                     </th>
-                    <th style="padding:10px; text-align:center;">Complexity</th>
-                    <th style="padding:10px; text-align:center;">Sec. Struct</th>
+                    <th style="padding:10px; text-align:center; vertical-align:top;">Complexity</th>
+                    <th style="padding:10px; text-align:center; vertical-align:top;">Sec. Struct</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1077,6 +1137,7 @@
                     <tr style="border-bottom:1px solid #e5e7eb;">
                       <td style="padding:10px; font-family:monospace; color:#1f2937;">{probe.probe_id}</td>
                       <td style="padding:10px; font-family:monospace; font-size:12px; white-space:nowrap;">{probe.sequence}</td>
+                      <td style="padding:10px; font-family:monospace; font-size:12px; white-space:nowrap;">{probe.order_ready}</td>
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.tm.toFixed(1)}</td>
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.gc_content.toFixed(1)}</td>
                       <td style="padding:10px; text-align:center; font-family:monospace;">{probe.complexity.toFixed(2)}</td>
@@ -1185,6 +1246,19 @@
           <p style="margin:6px 0 0 0; font-size:12px; color:#6b7280; line-height:1.5;">
             Probes are grouped by off-target risk. <strong>Safe</strong> = no off-target hits. <strong>Medium risk</strong> = either a failing k-mer match or an off-target alignment with 1–2 mismatches. <strong>High risk</strong> = exact off-target match to another gene. <strong>No alignment</strong> = probe doesn't bind the source gene at all.
           </p>
+          {#if probeRiskSummary.medium_risk_mismatch + probeRiskSummary.high_risk > 0}
+            <div style="margin-top:10px;">
+              <a
+                href={`/jobs/${jobId}/alignments/download?risk_report=true`}
+                class="download-link"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                </svg>
+                <span>Download medium/high risk report ({(probeRiskSummary.medium_risk_mismatch + probeRiskSummary.high_risk).toLocaleString()} probes)</span>
+              </a>
+            </div>
+          {/if}
         </div>
       {/if}
 
@@ -1332,6 +1406,9 @@
                     <th style="padding:8px; text-align:left;">Off-Target</th>
                     <th style="padding:8px; text-align:left;">Annotation</th>
                     <th style="padding:8px; text-align:center;">Mismatches</th>
+                    {#if showBulges}
+                      <th style="padding:8px; text-align:center;">Bulges</th>
+                    {/if}
                     <th style="padding:8px; text-align:center;">Position</th>
                     <th style="padding:8px; text-align:center;">Strand</th>
                     <th style="padding:8px; text-align:center;">GC%</th>
@@ -1352,20 +1429,23 @@
                           {alignmentLabel(aln)}
                         </td>
                       {/if}
-                      <td style="padding:8px; text-align:center;">
-                        <span style="padding:3px 6px; border-radius:3px; font-weight:600; background:{aln.mismatches <= 1 ? '#fee2e2' : '#fff7ed'}; color:{aln.mismatches <= 1 ? '#991b1b' : '#9a3412'};">
-                          {aln.mismatches}
-                        </span>
+                      <td style="padding:8px; text-align:center; font-family:monospace; color:#374151;">
+                        {subsOf(aln)}
                       </td>
+                      {#if showBulges}
+                        <td style="padding:8px; text-align:center; font-family:monospace; color:#374151;">
+                          {aln.bulges ?? 0}
+                        </td>
+                      {/if}
                       <td style="padding:8px; text-align:center; font-family:monospace;">{aln.position?.toLocaleString() || '-'}</td>
                       <td style="padding:8px; text-align:center;">
                         <span style="padding:3px 6px; border-radius:3px; background:#f3f4f6;">{aln.strand}</span>
                       </td>
                       <td style="padding:8px; text-align:center; font-family:monospace;">{aln.gc_content}</td>
                       <td style="padding:8px;">
-                        {#if aln.sequence}
+                        {#if aln.target_sequence || aln.sequence}
                           <div style="font-family:monospace; font-size:10px; line-height:1.5; word-break:break-all;">
-                            {#each formatSequenceWithHighlights(aln.sequence) as {char, isLowercase, isDash}}
+                            {#each formatSequenceWithHighlights(aln.target_sequence || aln.sequence) as {char, isLowercase, isDash}}
                               <span class:lowercase={isLowercase} class:dash={isDash}>{char}</span>
                             {/each}
                           </div>
@@ -1389,7 +1469,7 @@
       <div style="margin-top:1.5rem;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:4px;">
           <h3 style="margin:0; font-weight:600; font-size:16px;">
-            Off-target distribution
+            Off-target Distribution
           </h3>
           <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:#374151; flex-wrap:wrap;">
             <label for="offtarget-top-n">Show top:</label>
@@ -1456,7 +1536,7 @@
 
       {#if alignments.length > 0}
         <div style="margin-bottom:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
-          <span style="font-size:14px; color:#374151;">
+          <span style="font-size:14px; color:#374151; background-color:#fef08a; padding:2px 6px; border-radius:4px;">
             Showing first {alignments.length.toLocaleString()} of {totalAlignments.toLocaleString()} alignments. Download the TSV for full data.
           </span>
           <a
@@ -1469,29 +1549,78 @@
             </svg>
             <span>Download all alignments ({totalAlignments.toLocaleString()})</span>
           </a>
+          {#if probeRiskSummary && probeRiskSummary.medium_risk_mismatch + probeRiskSummary.high_risk > 0}
+            <a
+              href={`/jobs/${jobId}/alignments/download?risk_report=true`}
+              class="download-link"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+              </svg>
+              <span>Download medium/high risk report ({(probeRiskSummary.medium_risk_mismatch + probeRiskSummary.high_risk).toLocaleString()} probes)</span>
+            </a>
+          {/if}
         </div>
       {/if}
 
-      {#if groupedAlignments.length > 0}
+      {#if alignments.length > 0}
         <div style="overflow-x:auto; border:1px solid #e5e7eb; border-radius:6px;">
           <table style="width:100%; border-collapse:collapse; font-size:13px;">
             <thead>
               <tr style="background:#f9fafb; border-bottom:2px solid #d1d5db;">
-                <th style="padding:10px; text-align:left;">Probe ID</th>
-                <th style="padding:10px; text-align:center;">GC%</th>
-                <th style="padding:10px; text-align:left;">Sequence</th>
-                <th style="padding:10px; text-align:left;">Target</th>
+                <th style="padding:10px; text-align:left; vertical-align:top;">Probe ID</th>
+                <th style="padding:10px; text-align:center; vertical-align:top;">GC%</th>
+                <th style="padding:10px; text-align:left; vertical-align:top;">Sequence</th>
+                <th style="padding:10px; text-align:left; vertical-align:top;">Target</th>
                 {#if info?.species === 'human' || info?.species === 'mouse'}
-                  <th style="padding:10px; text-align:left;">Gene ID</th>
+                  <th style="padding:10px; text-align:left; vertical-align:top;">Gene ID</th>
                 {:else}
-                  <th style="padding:10px; text-align:left;">Species</th>
+                  <th style="padding:10px; text-align:left; vertical-align:top;">Species</th>
                 {/if}
-                <th style="padding:10px; text-align:center;">Mismatches</th>
-                <th style="padding:10px; text-align:center;">Position</th>
-                <th style="padding:10px; text-align:center;">Strand</th>
+                <th style="padding:10px; text-align:center; vertical-align:top;">
+                  <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+                    <span>Mismatches</span>
+                    <select
+                      bind:value={mismatchFilter}
+                      on:change={resetAlignmentPage}
+                      style="padding:3px 6px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; font-weight:400;"
+                    >
+                      <option value="">All</option>
+                      {#each mismatchOptions as opt}
+                        <option value={String(opt)}>{opt}</option>
+                      {/each}
+                    </select>
+                  </div>
+                </th>
+                {#if showBulges}
+                  <th style="padding:10px; text-align:center; vertical-align:top;">
+                    <div style="display:flex; flex-direction:column; align-items:center; gap:4px;">
+                      <span>Bulges</span>
+                      <select
+                        bind:value={bulgesFilter}
+                        on:change={resetAlignmentPage}
+                        style="padding:3px 6px; border:1px solid #d1d5db; border-radius:4px; font-size:12px; font-weight:400;"
+                      >
+                        <option value="">All</option>
+                        {#each bulgeOptions as opt}
+                          <option value={String(opt)}>{opt}</option>
+                        {/each}
+                      </select>
+                    </div>
+                  </th>
+                {/if}
+                <th style="padding:10px; text-align:center; vertical-align:top;">Position</th>
+                <th style="padding:10px; text-align:center; vertical-align:top;">Strand</th>
               </tr>
             </thead>
             <tbody>
+              {#if groupedAlignments.length === 0}
+                <tr>
+                  <td colspan={showBulges ? 9 : 8} style="padding:32px; text-align:center; color:#6b7280;">
+                    No alignments match the current filter.
+                  </td>
+                </tr>
+              {/if}
               {#each groupedAlignments as group}
                 {#each group.alignments as aln, idx}
                   <tr style="border-bottom:1px solid #e5e7eb;">
@@ -1516,11 +1645,14 @@
                     <td style="padding:8px; color:#1f2937; font-weight:600;">
                       {alignmentLabel(aln)}
                     </td>
-                    <td style="padding:10px; text-align:center;">
-                      <span style="padding:3px 8px; border-radius:3px; font-weight:600; background:{aln.mismatches <= 1 ? '#fee2e2' : '#fff7ed'}; color:{aln.mismatches <= 1 ? '#991b1b' : '#9a3412'};">
-                        {aln.mismatches}
-                      </span>
+                    <td style="padding:10px; text-align:center; font-family:monospace; color:#374151;">
+                      {subsOf(aln)}
                     </td>
+                    {#if showBulges}
+                      <td style="padding:10px; text-align:center; font-family:monospace; color:#374151;">
+                        {aln.bulges ?? 0}
+                      </td>
+                    {/if}
                     <td style="padding:10px; text-align:center; font-family:monospace; color:#6b7280;">
                       {aln.position?.toLocaleString() || '-'}
                     </td>
@@ -1566,7 +1698,15 @@
         </div>
       {:else}
         <div style="padding:40px; text-align:center; color:#6b7280; background:#f9fafb; border-radius:6px;">
-          No off-target alignment.
+          {#if kmerOffTargetProbes > 0}
+            <p style="margin:0 0 6px 0;">No full-length off-target alignments.</p>
+            <p style="margin:0;">
+              <strong>{formatNumber(kmerOffTargetProbes)}</strong>
+              probe{kmerOffTargetProbes === 1 ? '' : 's'} with off-target k-mer matches. See the K-mer Analysis Report above.
+            </p>
+          {:else}
+            No off-target alignment (full-length or k-mer).
+          {/if}
         </div>
       {/if}
     </div>

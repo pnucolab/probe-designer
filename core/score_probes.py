@@ -11,6 +11,10 @@ from Bio import SeqIO
 from scorer import ThermodynamicProbeScorer
 
 
+def _reverse_complement(sequence: str) -> str:
+    complement = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 'N': 'N'}
+    return ''.join(complement.get(base, 'N') for base in reversed(sequence.upper()))
+
 
 def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
     """
@@ -68,7 +72,8 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
             "Len",
             "Complexity",
             "SecStruct",
-            "Homopoly"
+            "Homopoly",
+            "OrderReadySeq"
         ]
         f.write("  ".join(header_parts) + "\n")
         f.write("-" * 245 + "\n")
@@ -81,7 +86,8 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
                 str(result['probe_length']),
                 f"{result['complexity']:.3f}",
                 f"{result['secondary_structure_penalty']:.3f}",
-                'Yes' if result['has_homopolymer'] else 'No'
+                'Yes' if result['has_homopolymer'] else 'No',
+                _reverse_complement(result['sequence'])
             ]
             f.write("  ".join(row_parts) + "\n")
 

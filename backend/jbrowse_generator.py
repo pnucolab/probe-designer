@@ -132,6 +132,7 @@ class JBrowseFileGenerator:
         # only when that file is absent (older jobs).
         probe_classifications = {}
         host_internal_mode = False
+        genome_self_match = False
         if aligned_sam_file.exists():
             source_info_file = self.output_dir / "source_info.json"
             if source_info_file.exists():
@@ -141,6 +142,7 @@ class JBrowseFileGenerator:
                 source_transcripts = set(_src.get('source_transcripts') or [])
                 source_gene = _src.get('source_gene')
                 host_internal_mode = bool(_src.get('host_internal_mode'))
+                genome_self_match = bool(_src.get('genome_self_match'))
             else:
                 source_info = infer_source_transcripts(str(aligned_sam_file))
                 source_transcripts = source_info['source_transcripts']
@@ -149,7 +151,8 @@ class JBrowseFileGenerator:
                 str(aligned_sam_file),
                 is_microbiome=is_microbiome,
                 source_transcripts=source_transcripts,
-                source_gene=source_gene
+                source_gene=source_gene,
+                genome_self_match=genome_self_match,
             )
         
         # Load safe probes from safe_probes_scores.txt if it exists
@@ -489,6 +492,8 @@ def generate_jbrowse_files(
         candidate_probes_file = Path(output_dir) / "candidate_probes.fa"
         # aligned_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
         classification_sam_file = Path(output_dir) / "filtered_probe_alignments_annotated.sam"
+        if not classification_sam_file.exists():
+            classification_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
         # bam_conversion_sam_file = Path(output_dir) / "filtered_probe_alignments.sam"
 
         logger.info("Parsing probe regions and risk classifications")
