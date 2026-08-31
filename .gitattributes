@@ -1,1 +1,14 @@
-*.gtf filter=lfs diff=lfs merge=lfs -text
+# Normalize line endings for text sources.
+* text=auto
+
+# Keep shell scripts and FASTA-like fixtures LF-only regardless of platform.
+*.sh text eol=lf
+*.py text eol=lf
+
+# Mark vendored binaries so GitHub's language stats and diffs ignore them.
+bin/* binary linguist-vendored
+
+# NOTE: `*.gtf filter=lfs diff=lfs merge=lfs -text` used to live here, but
+# git-lfs is not installed in this environment, so the filter silently no-opped
+# and a 2.4 GB GENCODE annotation was committed raw. Annotation files are now
+# excluded outright in .gitignore (*.gtf, *.gff3) instead of routed through LFS.
