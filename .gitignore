@@ -131,3 +131,6 @@ backend/conda_environment.yml
 # Stale lockfile. frontend/Dockerfile builds with `npm install` +
 # package-lock.json, and frontend/.dockerignore already drops this one.
 frontend/pnpm-lock.yaml
+
+# Benchmark write-up: links to benchmark/ and the split scripts, both untracked.
+docs/microbial_mismatch_benchmark.md
