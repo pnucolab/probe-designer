@@ -33,8 +33,8 @@ import shutil
 from Bio import SeqIO
 from Bio.Seq import Seq
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'core'))
-from score_probes import score_and_save_probes
-from scorer import ThermodynamicProbeScorer
+from probe_metrics_report import write_probe_metrics_report
+from probe_metrics import ProbeMetricsCalculator
 from probe_classifier import classify_probes_from_sam, infer_source_transcripts, resolve_source_from_header
 from host_internal_filter import filter_probes_by_self_alignment
 from backend.sam_parser import compute_edit_distance, compute_alignment_diffs
@@ -1248,23 +1248,23 @@ def main():
         tm_min, tm_max = float(tm_parts[0]), float(tm_parts[1])
     tm_min = max(10.0, tm_min)
     tm_max = min(100.0, tm_max)
-    scorer = ThermodynamicProbeScorer()
+    metrics = ProbeMetricsCalculator()
     candidates = list(SeqIO.parse(probes_out, 'fasta'))
     passed = []
     tm_rejected = 0
     homopolymer_rejected = 0
     for record in candidates:
         seq = str(record.seq)
-        tm = scorer.calculate_tm(seq)
+        tm = metrics.calculate_tm(seq)
         if not (tm_min <= tm <= tm_max):
             tm_rejected += 1
             continue
-        if scorer.check_homopolymer_runs(seq):
+        if metrics.check_homopolymer_runs(seq):
             homopolymer_rejected += 1
             continue
         passed.append(record)
     print(f"\nTm filter ({tm_min}-{tm_max}°C): rejected {tm_rejected}/{len(candidates)} probes")
-    print(f"Homopolymer filter (≥{scorer.max_homopolymer}bp runs): rejected {homopolymer_rejected}/{len(candidates)} probes")
+    print(f"Homopolymer filter (≥{metrics.max_homopolymer}bp runs): rejected {homopolymer_rejected}/{len(candidates)} probes")
     print(f"Passed both filters: {len(passed)}/{len(candidates)} probes")
     if len(passed) == 0:
         print("No probes passed Tm and homopolymer filters")
@@ -1587,10 +1587,10 @@ def main():
     print(f"\nTotal safe probes: {total_safe_count:,}")
 
     if total_safe_count > 0:
-        print(f"\nScoring {total_safe_count} safe probes...")
-        score_and_save_probes(safe_probes_file, safe_scores_csv)
+        print(f"\nMeasuring {total_safe_count} safe probes...")
+        write_probe_metrics_report(safe_probes_file, safe_scores_csv)
     else:
-        print("\nNo safe probes to score - creating empty score file...")
+        print("\nNo safe probes to measure - creating empty metrics file...")
         with open(safe_scores_csv, 'w', encoding='utf-8') as f:
             f.write("No safe probes found\n")
         safe_scores_txt = safe_scores_csv.replace('.csv', '.txt')

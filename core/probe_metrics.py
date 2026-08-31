@@ -1,6 +1,9 @@
 """
-Thermodynamic On-Target Probe Scoring
+Per-probe thermodynamic and sequence metrics.
 
+Measures intrinsic properties of a probe sequence (Tm, GC%, length,
+homopolymer runs, Shannon complexity, secondary-structure penalty). No
+composite score or ranking is produced — callers apply their own thresholds.
 """
 
 import math
@@ -11,10 +14,10 @@ from Bio.SeqUtils import gc_fraction
 import primer3
 
 
-class ThermodynamicProbeScorer:
+class ProbeMetricsCalculator:
     """
-    Thermodynamic-based probe quality scorer.
-    Evaluates probes based on intrinsic sequence properties.
+    Calculates thermodynamic and sequence metrics for individual probes.
+    Reports measured properties only; it does not rank or score them.
     """
 
     def __init__(self,
@@ -29,7 +32,7 @@ class ThermodynamicProbeScorer:
                  max_homopolymer: int = 5,
                  enable_hard_filters: bool = True):
         """
-        Initialize scorer with experimental conditions and design criteria.
+        Initialize the calculator with experimental conditions.
 
         Args:
             temperature_celsius: Hybridization temperature (default 37°C)
@@ -188,9 +191,9 @@ class ThermodynamicProbeScorer:
             'rejection_reason': None,
         }
 
-    def score_probe_set(self, sequences: List[str]) -> List[Dict]:
+    def calculate_metrics_for_set(self, sequences: List[str]) -> List[Dict]:
         """
-        Score multiple probes and return sorted results.
+        Calculate metrics for multiple probes, preserving input order.
         """
         results = []
 

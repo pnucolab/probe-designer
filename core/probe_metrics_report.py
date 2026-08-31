@@ -1,6 +1,8 @@
 """
-Utility module for scoring probe sequences using thermodynamic metrics.
-Integrates with probe_designer.py pipeline.
+Writes the per-probe metrics table consumed by the frontend.
+
+Measures each probe with ProbeMetricsCalculator and renders a fixed-width
+report. No probe is ranked or filtered here.
 """
 
 import csv
@@ -8,7 +10,7 @@ import os
 import sys
 from typing import List, Dict
 from Bio import SeqIO
-from scorer import ThermodynamicProbeScorer
+from probe_metrics import ProbeMetricsCalculator
 
 
 def _reverse_complement(sequence: str) -> str:
@@ -16,19 +18,19 @@ def _reverse_complement(sequence: str) -> str:
     return ''.join(complement.get(base, 'N') for base in reversed(sequence.upper()))
 
 
-def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
+def write_probe_metrics_report(fasta_file: str, output_csv: str) -> int:
     """
-    Score all probes in a FASTA file and save results to formatted table.
+    Measure all probes in a FASTA file and save results to a formatted table.
 
     Args:
         fasta_file: Path to input FASTA file with probe sequences
-        output_csv: Path to output file for scores (will be .txt format)
+        output_csv: Path to output file for metrics (will be .txt format)
 
     Returns:
-        Number of probes scored
+        Number of probes measured
     """
 
-    scorer = ThermodynamicProbeScorer(
+    calculator = ProbeMetricsCalculator(
         temperature_celsius=37.0,
         formamide_percent=50.0,
         na_concentration_mM=390.0,
@@ -50,7 +52,7 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
         return 0
 
 
-    results = scorer.score_probe_set(sequences)
+    results = calculator.calculate_metrics_for_set(sequences)
 
     seq_to_id = {seq: probe_id for seq, probe_id in zip(sequences, probe_ids)}
     for result in results:
@@ -61,7 +63,7 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
     with open(output_file, 'w', encoding='utf-8') as f:
 
         f.write("=" * 245 + "\n")
-        f.write("NON-ALIGNED PROBE SCORING RESULTS\n")
+        f.write("NON-ALIGNED PROBE METRICS\n")
         f.write("=" * 245 + "\n\n")
 
         header_parts = [
@@ -92,5 +94,5 @@ def score_and_save_probes(fasta_file: str, output_csv: str) -> int:
             f.write("  ".join(row_parts) + "\n")
 
 
-    print(f"\nScored {len(results)} probes")
+    print(f"\nMeasured {len(results)} probes")
     print(f"Results saved to: {output_file}")

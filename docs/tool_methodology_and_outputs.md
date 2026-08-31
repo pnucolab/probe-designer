@@ -198,11 +198,14 @@ New hosts or catalogs are added by editing `config/organisms.yml` — no code ch
 - GC content filtering (40-80% default)
 - Configurable probe length and step size
 
-**[`core/scorer.py`](core/scorer.py):**
-- Thermodynamic probe scoring using nearest-neighbor parameters
-- Melting temperature calculation
-- Secondary structure prediction
-- Complexity and homopolymer analysis
+**[`core/probe_metrics.py`](core/probe_metrics.py):**
+- Melting temperature via nearest-neighbor parameters, with formamide correction
+- Secondary structure penalty (hairpin / homodimer dG, via primer3)
+- GC content, length, Shannon complexity and homopolymer-run detection
+- Reports measured properties only — no composite score or ranking is computed
+
+**[`core/probe_metrics_report.py`](core/probe_metrics_report.py):**
+- Renders the per-probe metrics table written to `safe_probes_scores.txt`
 
 **[`core/probe_classifier.py`](core/probe_classifier.py):**
 - Classifies probes as safe, medium_risk, or high_risk
