@@ -96,10 +96,22 @@ Place files in the host's `genome_dir` (GENCODE hosts under
 Sources: [GENCODE](https://www.gencodegenes.org/) (human, mouse),
 [Ensembl](https://www.ensembl.org/) (other organisms).
 
-Split the transcript FASTA into chunks (~7–8 MB each) under
-`transcript_chunks_dir` so the pipeline can align in parallel. Helper scripts
-`split_human_transcripts.py` and `split_chunks.py` do this (adjust their
-hard-coded input paths to your files first).
+Split the transcript FASTA into chunks of roughly 7–8 MB each and place them in
+the organism's `transcript_chunks_dir`. The pipeline aligns chunks in parallel,
+which is what keeps a whole-transcriptome scan tractable; for the human
+transcriptome this works out to around 90–100 files.
+
+Only two things are required of the split:
+
+- **Every chunk file ends in `.fa`.** The pipeline collects chunks by listing
+  the directory and taking that extension — the filenames themselves are never
+  parsed, so any naming scheme works.
+- **No FASTA record is split across two chunks.** Break only at record
+  boundaries, i.e. immediately before a `>` header line.
+
+Any splitter that respects record boundaries will do (`seqkit split2`, or a
+short script that opens the next file once the current one passes the size
+target and the next line starts with `>`).
 
 ### 3. Microbiome catalogs
 
@@ -107,6 +119,36 @@ Place one FASTA per genome (`.fa`/`.fna`) in the catalog's `data_dir`
 (e.g. `data/gut-microbe/`). Catalog sources are linked from each
 `source_url` in `organisms.yml` (e.g. EBI MGnify genome catalogues).
 An optional `genomes-all_metadata.tsv` adds species annotation.
+
+#### Custom catalog for a known community
+
+A full public catalog holds thousands of genomes and treats every one of them as
+potentially present, so probes are rejected for cross-reactivity with organisms
+that may not occur in your samples at all. If you know which organisms are in
+your system — from 16S or shotgun profiling, or because it is a defined
+community — screen against just those genomes instead:
+
+1. Create `data/<your-catalog-id>/` and place one FASTA per reference genome in
+   it (same layout as any other catalog).
+2. Register it under the relevant host's `microbiomes:` list in
+   `config/organisms.yml`:
+
+   ```yaml
+   - id: my-community
+     display_name: My Sample Community
+     data_dir: data/my-community
+   ```
+
+3. Build its k-mer databases as in step 4 below
+   (`python build_kmer_dbs.py --species my-community`).
+4. Select it in the web UI, or pass `--microbiomes my-community
+   --align-microbiome` on the command line.
+
+Probe yield is typically much higher, because a probe is only rejected for
+organisms that are actually there. The trade-off is transferability: probes
+validated against a narrow catalog may cross-react in samples whose community
+differs, so a catalog-wide screen remains the conservative choice when the
+community is unknown or variable between subjects.
 
 ### 4. Build k-mer databases
 
@@ -202,7 +244,6 @@ Environment variables:
 │       ├── UploadForm.svelte
 │       ├── JobStatus.svelte
 │       └── JBrowseViewer.svelte
-├── bin/                      # Binary executables
 ├── core/                     # Core utilities
 ├── docs/                     # Documentation
 ├── probe_designer.py         # Main pipeline script

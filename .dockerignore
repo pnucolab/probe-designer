@@ -1,39 +1,105 @@
+# NOTE: Docker ignore patterns are matched against the path relative to the
+# build context root and are NOT recursive. A bare `.env` excludes only
+# ./.env — it does NOT exclude backend/.env. Every pattern that must apply at
+# any depth is therefore written twice: once bare and once with a `**/` prefix.
+
 # Allow all frontend files
 !frontend/
 !frontend/**
 
 # Python
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.py[cod]
 *$py.class
 *.so
 .Python
 env/
 venv/
 ENV/
+.venv/
+**/.venv/
 *.egg-info/
+**/*.egg-info/
 .pytest_cache/
+**/.pytest_cache/
 .coverage
+
 # IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
+**/*.swp
+**/*.swo
+
 # Git
 .git/
 .gitignore
+**/.gitignore
+.gitattributes
+
 # Docker
 Dockerfile
 docker-compose.yml
 .dockerignore
+**/Dockerfile
+daemon.json
+
 # Documentation
 *.md
 docs/
+**/*.md
+
 # OS
 .DS_Store
 Thumbs.db
+**/.DS_Store
+
 # Logs
 *.log
-# Environment
+**/*.log
+
+# Environment / secrets — must never be baked into an image layer.
+# The `**/` forms are what actually keep backend/.env out.
 .env
-.env.local
+.env.*
+**/.env
+**/.env.*
+*.pem
+*.key
+**/*.pem
+**/*.key
+id_rsa*
+id_ed25519*
+
+# Installer packages
+*.deb
+*.rpm
+
+# Tests, benchmarks and prebuilt binaries are not needed at runtime.
+# bin/ held RazerS3 + gffread; nothing in the image reads /app/bin any more.
+tests/
+benchmark/
+bin/
+
+# Dead modules. `COPY core/ ./core/` would otherwise bake these into the image
+# straight from the working tree, even though they are untracked and nothing
+# imports them:
+#   config.py            - leftover scratch; mkdir's ./files at import time
+#   smart_kmer_filter.py - superseded k-mer filter, still takes a `razers` arg
+core/config.py
+core/smart_kmer_filter.py
+
+# Large data / generated dirs — mounted as volumes at runtime, never needed in
+# the build context (data/ would send hundreds of gigabytes to the daemon).
+data/
+output/
+outputs/
+microbial_genomes/
+gene_sequences/
+probe_sequences/
+frontend/node_modules/
+**/node_modules/
+dump.rdb

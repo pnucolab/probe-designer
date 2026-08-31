@@ -10,6 +10,13 @@ probe_sequences/
 *.faa
 *.gbk
 *.gb
+# Annotation files — large, and *.gtf was previously routed through Git LFS
+# (see .gitattributes history). Ignored outright so a stray `git add` can never
+# commit a multi-GB GENCODE annotation again.
+*.gtf
+*.gff3
+*.gtf.gz
+*.gff3.gz
 
 # Redis
 dump.rdb
@@ -23,6 +30,7 @@ __pycache__/
 venv/
 env/
 ENV/
+.venv/
 *.egg-info/
 
 # Node
@@ -31,41 +39,95 @@ frontend/node_modules/
 frontend/dist/
 frontend/build/
 frontend/.svelte-kit/
+.vite/
 
 # IDE
 .vscode/
 .idea/
 *.swp
+*.swo
 
-# Environment
+# Environment / secrets — patterns are repeated with **/ so they match at any
+# depth, not just the repo root (plain `.env` would miss backend/.env).
 .env
-.env.local
-delete_outputs.py
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.credentials
+credentials.json
+secrets.yml
+secrets.yaml
+
+# Host / machine-specific config — not part of the project, leaks host layout
+daemon.json
+
+# Downloaded installer packages and archives
+*.deb
+*.rpm
+*.tar.gz
+*.tgz
+*.zip
+
 # Logs
 *.log
 logs/
+pipeline_log.txt
 
 # OS
 .DS_Store
 Thumbs.db
 
-
-
-# Output
-output/
-results/
-cat >> .gitignore << EOF
-
 # Output and result files
 output/
+outputs/
 results/
 *.sam
 *.bam
 *.bai
+*.fai
 *.fasta.fai
-*.gff3
-pipeline_log.txt
-EOFsplit_chunks.py
 
-outputs/
-.vite/
+# Local helper scripts (machine-specific, not part of the published tool)
+delete_outputs.py
+
+# Prebuilt third-party binaries (RazerS3, gffread).
+# Not redistributed: the pipeline is GPU-only and no longer calls RazerS3, and
+# gffread is installed from apt/conda. RazerS3 is still used locally as the
+# ground-truth oracle for the GPU-aligner parity tests in tests/, so the files
+# stay on disk — they are just not committed.
+bin/
+
+# Test suite — kept local, not published.
+tests/
+
+
+# Benchmarks — development-only, like tests/ above. Excluded from the image by
+# .dockerignore and never imported by the pipeline. The result .txt files and
+# the analysis notebook are local provenance, not part of the published tool.
+benchmark/
+
+# Data-prep helpers. Not copied into the image by backend/Dockerfile; they are
+# run by hand once, against local reference data, before the tool ever starts.
+split_chunks.py
+split_human_transcripts.py
+
+# Dead modules kept on disk for reference but never imported by anything:
+#   config.py           — leftover scratch; also mkdir's ./files at import time
+#   smart_kmer_filter.py — superseded k-mer filter, still takes a `razers` arg
+core/config.py
+core/smart_kmer_filter.py
+
+# Dev-machine conda export. The image installs from requirements.txt and
+# nothing in the project reads this file.
+backend/conda_environment.yml
+
+# Stale lockfile. frontend/Dockerfile builds with `npm install` +
+# package-lock.json, and frontend/.dockerignore already drops this one.
+frontend/pnpm-lock.yaml
