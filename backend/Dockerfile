@@ -2,12 +2,13 @@
 #
 # The aligner and k-mer counting run on the GPU via CuPy, which JIT-compiles
 # CUDA kernels — so the image needs the CUDA toolkit (NVRTC + headers), not just
-# the runtime. Jellyfish and RazerS3 remain for the ungapped/edge fallbacks.
+# the runtime. Jellyfish remains as the CPU fallback for k-mer counting when k
+# exceeds the GPU limit.
 #
-# The container only accelerates when GPUs are attached: grant them in
-# docker-compose.yml (deploy.resources.reservations.devices) and install
-# nvidia-container-toolkit on the host. Without a GPU the pipeline still runs
-# (RazerS3 + Jellyfish) but without acceleration.
+# A GPU is REQUIRED for alignment: grant one in docker-compose.yml
+# (deploy.resources.reservations.devices) and install nvidia-container-toolkit
+# on the host. With no usable GPU the pipeline aborts — RazerS3 was removed and
+# there is no CPU alignment fallback.
 FROM nvidia/cuda:12.9.1-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \

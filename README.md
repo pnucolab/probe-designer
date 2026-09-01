@@ -203,25 +203,45 @@ data/
 
 ### API Endpoints
 
-**Submit Job:**
+**Submit job:**
 ```
-POST /submit-job
-Form data: input_type, input_data, species
-```
-
-**Job Status:**
-```
-GET /job-status/{job_id}
+POST /jobs
+Form fields: gene_sequence | probe_sequence  (exactly one),
+             species, microbiomes, mode, probe_length, max_mismatches,
+             max_bulges, kmer_length, tm_range, gc_range,
+             align_host, align_microbiome
 ```
 
-**Get Alignments:**
+**Job status:**
 ```
-GET /api/probes/{job_id}?page=1&page_size=25&mismatch_filter=0
+GET /jobs/{job_id}
 ```
 
-**Download Files:**
+**List result files:**
 ```
-GET /download/{job_id}/{filename}
+GET /jobs/{job_id}/files
+```
+
+**Alignments (paginated):**
+```
+GET /jobs/{job_id}/alignments?page=1&page_size=25&mismatch=0&probe_id=probe_1
+GET /jobs/{job_id}/alignments/download          # TSV; add ?risk_report=true
+```
+
+**Off-target summary:**
+```
+GET /jobs/{job_id}/offtarget-summary?top_n=12
+```
+
+**Download a result file:**
+```
+GET /jobs/{job_id}/download/{filename}
+```
+
+**Organism registry / host-token check:**
+```
+GET  /api/organisms
+POST /validate-host-token       Form fields: fasta, species
 ```
 
 ## Configuration
@@ -253,14 +273,19 @@ Environment variables:
 
 ## Output Files
 
-Each job generates:
-- `probe_alignments.bam`
-- `probe_alignments.bam.bai`
-- `filtered_probe_alignments.bam`
-- `filtered_probe_alignments.bam.bai`
-- `probes.gff3`
-- `reference.fasta.fai`
-- JBrowse 2 configuration files
+Each job writes these to `output/alignments/{job_id}/`:
+
+| File | Contents |
+| --- | --- |
+| `safe_probes_scores.txt` | Per-probe metrics table (Tm, GC%, length, complexity, secondary structure) |
+| `kmer_matches_report.txt` | K-mer safety check results for non-aligned probes |
+| `candidate_probes.fa` | Probes after GC, Tm and homopolymer filtering |
+| `non_aligned_probes.fa` | Probes with no alignment to the reference |
+| `probe_alignments.sam` / `.bam` / `.bam.bai` | All alignments |
+| `filtered_probe_alignments.sam` / `.bam` / `.bam.bai` | Alignments within the mismatch budget |
+| `filtered_probe_alignments_annotated.sam` | Filtered alignments with gene annotations |
+| `probes.gff3` | Probe positions for the JBrowse 2 track |
+| `reference.fasta` / `.fai` | Reference sequence and index used by JBrowse 2 |
 
 ## License
 

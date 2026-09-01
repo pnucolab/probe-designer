@@ -214,8 +214,8 @@ no composite score or quality tier.
 
 .. code-block:: text
 
-   NON-ALIGNED PROBE SCORING RESULTS
-   =================================
+   NON-ALIGNED PROBE METRICS
+   =========================
 
    Probe ID                     Sequence                              Tm(°C)  GC%   Len  Complexity  SecStruct  Homopoly
    -------------------------------------------------------------------------------------------------------------------

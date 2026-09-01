@@ -114,7 +114,7 @@ For **Gene Sequence Input:**
 4. Parse alignment results (SAM format) 
 5. Filter alignments by mismatch threshold
 6. **14-mer Safety Check** on non-aligned probes
-7. Score final safe probes using thermodynamic calculations
+7. Measure final safe probes (thermodynamic and sequence metrics)
 
 For **Probe Sequence Input:**
 1. Read pre-designed probes
@@ -123,10 +123,10 @@ For **Probe Sequence Input:**
 4. Parse and analyze alignments
 5. Filter alignments by mismatch threshold
 6. **14-mer Safety Check** on non-aligned probes
-7. Score final safe probes
+7. Measure final safe probes (thermodynamic and sequence metrics)
 
 **Key Functions:**
-- Genome download and indexing (GENCODE via [`core/genome_downloader.py`](core/genome_downloader.py))
+- Reads pre-staged genome and transcript-chunk data (see README, "Genome data")
 - Probe generation with GC content filtering
 - **14-mer generation and safety analysis**
 - GPU alignment execution (RazerS3-compatible SAM output)
@@ -187,11 +187,9 @@ New hosts or catalogs are added by editing `config/organisms.yml` — no code ch
 
 #### 6. Core Utilities
 
-**[`core/genome_downloader.py`](core/genome_downloader.py):**
-- Downloads GENCODE genome and annotation files
-- Filters transcripts by length (≥50bp)
-- Chunks filtered transcripts for parallel processing
-- Automatic cleanup of outdated releases
+**[`core/genome_stage.py`](core/genome_stage.py):**
+- Stages reference FASTA files onto fast local storage for alignment
+- Maps scan paths onto the staged copies when a local root is configured
 
 **[`core/generate_probes.py`](core/generate_probes.py):**
 - Generates tiled probes from input sequences
@@ -325,7 +323,7 @@ GATCGATCGATCGA   12-25      ENST00000345678.2            TUBB         54321
 
 **Results View:**
 - Pipeline statistics (candidate probes, alignments, filtered results)
-- Probe scoring table with thermodynamic metrics
+- Per-probe metrics table (thermodynamic and sequence properties)
 - Per-chromosome alignment breakdown
 - Downloadable result files
 
@@ -343,7 +341,7 @@ GATCGATCGATCGA   12-25      ENST00000345678.2            TUBB         54321
 
 **File Downloads:**
 - SAM/BAM files (per chromosome and merged)
-- Probe scoring tables
+- Per-probe metrics tables
 - JBrowse configuration files
 - Pipeline logs and statistics
 
@@ -433,7 +431,7 @@ docker-compose down
 
 1. Celery worker picks up task
 2. Worker executes [`probe_designer.py`](probe_designer.py) subprocess
-3. Pipeline downloads/indexes genome (if needed) using [`core/genome_downloader.py`](core/genome_downloader.py)
+3. Pipeline resolves the organism's genome and transcript chunks from `config/organisms.yml` (data must already be staged on disk)
 4. **Probe Generation & Initial Filtering:**
    - Generates probes (gene input) or reads probes (probe input)
    - Applies GC content filtering (40-80%)
@@ -447,7 +445,7 @@ docker-compose down
    - Performs parallel 14-mer alignment against genome
    - Identifies and removes probes with matching 14-mers
 7. **Final Processing:**
-   - Scores remaining safe probes using thermodynamic calculations
+   - Measures remaining safe probes (thermodynamic and sequence metrics)
    - Classifies probes by risk level
    - Creates JBrowse visualization files
    - Updates job status to SUCCESS/FAILURE
@@ -498,7 +496,7 @@ GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCT
 - Sorted and indexed for fast random access
 - Used by JBrowse for visualization
 
-**Probe Scoring Files:**
+**Probe Metrics Files:**
 - Whitespace-delimited text table
 - Thermodynamic properties and quality metrics
 - Listed in probe order (no composite score or ranking)
@@ -677,9 +675,10 @@ python probe_designer.py --gene-sequence ">test\nATCGATCGATCGATCGATCGATCGATCGAT"
 1. **GC Content Filter:** 40-80% GC content (eliminates ~10-20% of probes)
 2. **Primary Alignment Filter:** ≤2 mismatches allowed (species-specific filtering)
 3. **14-mer Safety Filter:** Zero 14-mer matches required (final safety verification)
-4. **Quality Scoring:** Thermodynamic and complexity metrics for ranking
+4. **Quality Metrics:** Thermodynamic and complexity properties are measured
+   and reported; they are not combined into a score and do not rank probes
 
-### Probe Scoring Metrics
+### Probe Quality Metrics
 
 - **Melting Temperature (Tm):** Nearest-neighbor thermodynamics
 - **GC Content:** Percentage of G and C bases

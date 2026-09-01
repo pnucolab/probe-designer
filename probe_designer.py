@@ -5,10 +5,10 @@ This script handles two input scenarios:
 
 Usage:
   # Scenario 1: Gene sequence (pasted)
-  python simple_pipeline.py --gene-sequence ">gene1\nATCG..." --species human --probe-length 36 --max-mismatches 2
+  python probe_designer.py --gene-sequence ">gene1\nATCG..." --species human --probe-length 36 --max-mismatches 2
   
   # Scenario 2: Probe sequence (pasted)
-  python simple_pipeline.py --probe-sequence ">probe1\nATCG..." --species human --max-mismatches 2
+  python probe_designer.py --probe-sequence ">probe1\nATCG..." --species human --max-mismatches 2
 
 Notes:
 - Only ONE input type allowed per run (mutually exclusive)
