@@ -1356,6 +1356,7 @@ def download_job_file(job_id: str, filename: str):
         "probe_alignments.bam",
         "probe_alignments.bam.bai",
         "non_aligned_probes.fa",
+        "safe_probes.fa",
         "safe_probes_scores.txt",
         "candidate_probes.fa",
         "reference.fasta",
