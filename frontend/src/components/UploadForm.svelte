@@ -125,13 +125,14 @@ GCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACT`;
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
   // Leaving a range blank applies the default for the current input mode.
-  // Probe input defaults wide (20-90) so provided probes are never dropped.
+  // Gene input falls back to the design range; probe input applies no filter
+  // at all, so provided probes are never dropped.
   $: gcPlaceholder = inputType === 'gene'
     ? 'e.g. 40-80 or 50 (default: 40-80)'
-    : 'e.g. 40-80 or 50 (default: 20-90, keeps all probes)';
+    : 'e.g. 40-80 or 50 (optional - no filter by default)';
   $: tmPlaceholder = inputType === 'gene'
     ? 'e.g. 42-47 or 45 (default: 42-47)'
-    : 'e.g. 42-47 or 45 (default: 20-90, keeps all probes)';
+    : 'e.g. 42-47 or 45 (optional - no filter by default)';
   let species = 'human';
   let selectedMicrobiomes = [];
   let kmerLength = '';

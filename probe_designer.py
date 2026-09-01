@@ -954,13 +954,13 @@ def main():
     parser.add_argument("--align-host", action="store_true", default=False,
                     help="Align against host transcriptome")
     parser.add_argument("--tm-range", type=str, default=None,
-                    help="Tm filter range in °C, e.g. 42-47. Default depends on "
-                         "input: 42-47 for gene input, 20-90 for probe input "
-                         "(wide enough to keep every provided probe).")
+                    help="Tm filter range in °C, e.g. 42-47. Gene input defaults "
+                         "to 42-47; probe input applies no Tm filter unless this "
+                         "is given.")
     parser.add_argument("--gc-range", type=str, default=None,
-                    help="GC content filter range in percent, e.g. 40-80. Default "
-                         "depends on input: 40-80 for gene input, 20-90 for probe "
-                         "input (wide enough to keep every provided probe).")
+                    help="GC content filter range in percent, e.g. 40-80. Gene "
+                         "input defaults to 40-80; probe input applies no GC filter "
+                         "unless this is given.")
     parser.add_argument("--host-internal-mode", action="store_true", default=False,
                     help="Host-internal design: keep only probes whose every alignment is to the source transcript (rejects non-aligned and cross-transcript-aligned probes)")
     parser.add_argument("--microbe-mode", action="store_true", default=False,
@@ -1160,24 +1160,28 @@ def main():
         print(f"Local genome staging active ({genome_stage.local_root()}): "
               f"{_staged}/{_total} reference files served from local NVMe")
 
-    # Range defaults depend on the input mode. Probes supplied by the user are
-    # kept as given, so an unspecified range widens to 20-90 rather than the
-    # design defaults, which would silently discard probes the user chose. An
+    # Range handling depends on the input mode. Gene input falls back to the
+    # design defaults. Probe input applies NO filter unless the user asked for
+    # one — probes supplied by the user are taken exactly as given. An
     # explicitly supplied range is always honoured, in either mode.
-    if args.tm_range is None:
-        args.tm_range = "20-90" if skip_probe_generation else "42-47"
-    if args.gc_range is None:
-        args.gc_range = "20-90" if skip_probe_generation else "40-80"
-    if skip_probe_generation:
-        print(f"Filter ranges - Tm {args.tm_range}°C, GC {args.gc_range}%")
+    if not skip_probe_generation:
+        if args.tm_range is None:
+            args.tm_range = "42-47"
+        if args.gc_range is None:
+            args.gc_range = "40-80"
+    filter_tm = args.tm_range is not None
+    filter_gc = args.gc_range is not None
 
-    gc_parts = args.gc_range.split('-')
-    if len(gc_parts) == 1:
-        gc_min = gc_max = float(gc_parts[0])
+    if filter_gc:
+        gc_parts = args.gc_range.split('-')
+        if len(gc_parts) == 1:
+            gc_min = gc_max = float(gc_parts[0])
+        else:
+            gc_min, gc_max = float(gc_parts[0]), float(gc_parts[1])
+        gc_min = max(0.0, gc_min)
+        gc_max = min(100.0, gc_max)
     else:
-        gc_min, gc_max = float(gc_parts[0]), float(gc_parts[1])
-    gc_min = max(0.0, gc_min)
-    gc_max = min(100.0, gc_max)
+        gc_min, gc_max = 0.0, 100.0
 
     if skip_probe_generation:
         print("\nSkipping probe generation - using provided probes")
@@ -1187,11 +1191,17 @@ def main():
         SeqIO.write(passing, probes_out, "fasta")
 
         length_desc = f"{min_len}" if min_len == max_len else f"{min_len}-{max_len}"
-        print(f"Input probes: {total}")
-        print(f"Found {len(passing)} candidate probes passing GC filter ({gc_min:g}-{gc_max:g}%, length={length_desc} bp).")
+        print(f"Input probes: {total} (length={length_desc} bp)")
+        if filter_gc:
+            print(f"GC filter ({gc_min:g}-{gc_max:g}%): kept {len(passing)}/{total} probes")
+        else:
+            print(f"No GC filter applied - kept {len(passing)}/{total} probes")
+            if len(passing) != total:
+                print(f"  ({total - len(passing)} excluded: sequence contains N, "
+                      f"so its metrics cannot be computed)")
 
         if len(passing) == 0:
-            print("No probes passed GC filter")
+            print("No usable probes in input")
             return False
     else:
         print("\nGenerating probes from input sequence...")
@@ -1206,13 +1216,16 @@ def main():
         if not run(gen_cmd, 'Generate candidate probes', check_output_file=probes_out):
             return False
 
-    tm_parts = args.tm_range.split('-')
-    if len(tm_parts) == 1:
-        tm_min = tm_max = float(tm_parts[0])
+    if filter_tm:
+        tm_parts = args.tm_range.split('-')
+        if len(tm_parts) == 1:
+            tm_min = tm_max = float(tm_parts[0])
+        else:
+            tm_min, tm_max = float(tm_parts[0]), float(tm_parts[1])
+        tm_min = max(10.0, tm_min)
+        tm_max = min(100.0, tm_max)
     else:
-        tm_min, tm_max = float(tm_parts[0]), float(tm_parts[1])
-    tm_min = max(10.0, tm_min)
-    tm_max = min(100.0, tm_max)
+        tm_min = tm_max = None
     metrics = ProbeMetricsCalculator()
     candidates = list(SeqIO.parse(probes_out, 'fasta'))
     passed = []
@@ -1221,7 +1234,7 @@ def main():
     for record in candidates:
         seq = str(record.seq)
         tm = metrics.calculate_tm(seq)
-        if not (tm_min <= tm <= tm_max):
+        if filter_tm and not (tm_min <= tm <= tm_max):
             tm_rejected += 1
             continue
         if metrics.check_homopolymer_runs(seq):
@@ -1231,7 +1244,10 @@ def main():
             if not skip_probe_generation:
                 continue
         passed.append(record)
-    print(f"\nTm filter ({tm_min}-{tm_max}°C): rejected {tm_rejected}/{len(candidates)} probes")
+    if filter_tm:
+        print(f"\nTm filter ({tm_min}-{tm_max}°C): rejected {tm_rejected}/{len(candidates)} probes")
+    else:
+        print(f"\nNo Tm filter applied - {len(candidates)} probes measured only")
     if skip_probe_generation:
         print(f"Homopolymer (≥{metrics.max_homopolymer}bp runs): {homopolymer_rejected}/{len(candidates)} probes "
               f"(reported only, not filtered)")
