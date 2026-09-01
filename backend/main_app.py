@@ -855,6 +855,12 @@ def parse_pipeline_stats(log_path):
         match = re.search(r'Found ([\d,]+) candidate probes passing GC filter', content)
         if match:
             stats["gc_passed"] = int(match.group(1).replace(',', ''))
+        else:
+            # Probe input reports GC differently, and may apply no filter at all.
+            match = re.search(
+                r'(?:GC filter \([^)]*\):|No GC filter applied -) kept ([\d,]+)/', content)
+            if match:
+                stats["gc_passed"] = int(match.group(1).replace(',', ''))
 
         if stats["input_probes"] is not None and stats["gc_passed"] is not None:
             stats["gc_rejected"] = stats["input_probes"] - stats["gc_passed"]
@@ -862,16 +868,24 @@ def parse_pipeline_stats(log_path):
         match = re.search(r'Tm filter.*rejected ([\d,]+)/', content)
         if match:
             stats["tm_rejected"] = int(match.group(1).replace(',', ''))
+        elif 'No Tm filter applied' in content:
+            stats["tm_rejected"] = 0
 
         match = re.search(r'Homopolymer filter.*rejected ([\d,]+)/', content)
         if match:
             stats["homopolymer_rejected"] = int(match.group(1).replace(',', ''))
+        elif 'reported only, not filtered' in content:
+            # Probe input measures homopolymer runs but never drops a probe.
+            stats["homopolymer_rejected"] = 0
 
         match = re.search(r'Passed both filters: ([\d,]+)/', content)
         if match:
             stats["candidate_probes"] = int(match.group(1).replace(',', ''))
         else:
-            if stats["gc_passed"] is not None:
+            match = re.search(r'Retained ([\d,]+)/', content)
+            if match:
+                stats["candidate_probes"] = int(match.group(1).replace(',', ''))
+            elif stats["gc_passed"] is not None:
                 stats["candidate_probes"] = stats["gc_passed"]
         
         match = re.search(r'Total alignments scanned:\s*([\d,]+)', content)
