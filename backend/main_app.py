@@ -477,8 +477,8 @@ async def create_job(
     microbiomes: str = Form(""),
     align_microbiome: str = Form("false"),
     align_host: str = Form("false"),
-    tm_range: str = Form("42-47"),
-    gc_range: str = Form("40-80"),
+    tm_range: str = Form(""),
+    gc_range: str = Form(""),
     mode: str = Form("microbe"),
 ):
     

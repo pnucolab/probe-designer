@@ -124,6 +124,14 @@ GCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACT`;
 
   let pastedText = '';
   $: placeholderText = inputType === 'gene' ? defaultGeneSequence : defaultProbeSequence;
+  // Leaving a range blank applies the default for the current input mode.
+  // Probe input defaults wide (20-90) so provided probes are never dropped.
+  $: gcPlaceholder = inputType === 'gene'
+    ? 'e.g. 40-80 or 50 (default: 40-80)'
+    : 'e.g. 40-80 or 50 (default: 20-90, keeps all probes)';
+  $: tmPlaceholder = inputType === 'gene'
+    ? 'e.g. 42-47 or 45 (default: 42-47)'
+    : 'e.g. 42-47 or 45 (default: 20-90, keeps all probes)';
   let species = 'human';
   let selectedMicrobiomes = [];
   let kmerLength = '';
@@ -364,8 +372,10 @@ GCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACT`;
     form.append('kmer_length', String(kmerLength || 16));
     form.append('max_mismatches', String(max_mismatches === '' || max_mismatches == null ? 2 : max_mismatches));
     form.append('max_bulges', String(max_bulges === '' || max_bulges == null ? 0 : max_bulges));
-    form.append('tm_range', tmRange || '42-47');
-    form.append('gc_range', gcRange || '40-80');
+    // Send blank when the user left the field empty; the backend then picks a
+    // default that suits the input mode instead of forcing the design range.
+    form.append('tm_range', tmRange);
+    form.append('gc_range', gcRange);
 
     console.log('Form data being sent:');
     for (let [key, value] of form.entries()) {
@@ -518,11 +528,11 @@ GCAGGAAGAATAGTCAGAACTGCAGTCCATGCAACT`;
           <div style="padding: 16px; border: 1px solid #e5e7eb; border-radius: 8px; background: white; display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 4px;">
             <div>
               <label for="gc_range" class="radio-label" style="display:block; margin-bottom:4px;">GC Range (%)</label>
-              <input id="gc_range" type="text" bind:value={gcRange} placeholder="e.g. 40-80 or 50 (default: 40-80)" class="number-input" />
+              <input id="gc_range" type="text" bind:value={gcRange} placeholder={gcPlaceholder} class="number-input" />
             </div>
             <div>
               <label for="tm_range" class="radio-label" style="display:block; margin-bottom:4px;">Tm Range (°C)</label>
-              <input id="tm_range" type="text" bind:value={tmRange} placeholder="e.g. 42-47 or 45 (default: 42-47)" class="number-input" />
+              <input id="tm_range" type="text" bind:value={tmRange} placeholder={tmPlaceholder} class="number-input" />
             </div>
           </div>
         </div>

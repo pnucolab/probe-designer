@@ -58,7 +58,7 @@ def _write_job_meta(output_dir, submitted_at, completed_at, execution_time, stat
 
 
 @celery_app.task(bind=True, name="run_pipeline_task")
-def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=16, max_bulges=0, microbiomes="", align_microbiome=False, align_host=False, tm_range="42-47", gc_range="40-80", host_internal_mode=False, microbe_mode=False, submitted_at=""):
+def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input_type, input_file, storage_dir, kmer_length=16, max_bulges=0, microbiomes="", align_microbiome=False, align_host=False, tm_range="", gc_range="", host_internal_mode=False, microbe_mode=False, submitted_at=""):
     """
     Run the probe design pipeline.
     
@@ -110,8 +110,13 @@ def run_pipeline_task(self, species, probe_length, max_mismatches, job_id, input
             "--max-bulges", str(max_bulges),
             "--task-id", job_id,
         ]
-        cmd.extend(["--tm-range", tm_range])
-        cmd.extend(["--gc-range", gc_range])
+        # Only forward a range the user actually set. Omitting the flag lets
+        # probe_designer pick the default for the input mode (wide for probe
+        # input, so provided probes are never dropped).
+        if tm_range:
+            cmd.extend(["--tm-range", tm_range])
+        if gc_range:
+            cmd.extend(["--gc-range", gc_range])
         if microbiomes:
             cmd.extend(["--microbiomes", microbiomes])
         if align_microbiome:

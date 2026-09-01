@@ -953,10 +953,14 @@ def main():
                    help="Align against microbiome genomes")
     parser.add_argument("--align-host", action="store_true", default=False,
                     help="Align against host transcriptome")
-    parser.add_argument("--tm-range", type=str, default="42-47",
-                    help="Tm filter range in °C, e.g. 42-47 (default: 42-47)")
-    parser.add_argument("--gc-range", type=str, default="40-80",
-                    help="GC content filter range in percent, e.g. 40-80 (default: 40-80)")
+    parser.add_argument("--tm-range", type=str, default=None,
+                    help="Tm filter range in °C, e.g. 42-47. Default depends on "
+                         "input: 42-47 for gene input, 20-90 for probe input "
+                         "(wide enough to keep every provided probe).")
+    parser.add_argument("--gc-range", type=str, default=None,
+                    help="GC content filter range in percent, e.g. 40-80. Default "
+                         "depends on input: 40-80 for gene input, 20-90 for probe "
+                         "input (wide enough to keep every provided probe).")
     parser.add_argument("--host-internal-mode", action="store_true", default=False,
                     help="Host-internal design: keep only probes whose every alignment is to the source transcript (rejects non-aligned and cross-transcript-aligned probes)")
     parser.add_argument("--microbe-mode", action="store_true", default=False,
@@ -1156,6 +1160,17 @@ def main():
         print(f"Local genome staging active ({genome_stage.local_root()}): "
               f"{_staged}/{_total} reference files served from local NVMe")
 
+    # Range defaults depend on the input mode. Probes supplied by the user are
+    # kept as given, so an unspecified range widens to 20-90 rather than the
+    # design defaults, which would silently discard probes the user chose. An
+    # explicitly supplied range is always honoured, in either mode.
+    if args.tm_range is None:
+        args.tm_range = "20-90" if skip_probe_generation else "42-47"
+    if args.gc_range is None:
+        args.gc_range = "20-90" if skip_probe_generation else "40-80"
+    if skip_probe_generation:
+        print(f"Filter ranges - Tm {args.tm_range}°C, GC {args.gc_range}%")
+
     gc_parts = args.gc_range.split('-')
     if len(gc_parts) == 1:
         gc_min = gc_max = float(gc_parts[0])
@@ -1211,11 +1226,19 @@ def main():
             continue
         if metrics.check_homopolymer_runs(seq):
             homopolymer_rejected += 1
-            continue
+            # There is no user-facing setting for homopolymer runs, so a
+            # provided probe is never dropped for one — it is only reported.
+            if not skip_probe_generation:
+                continue
         passed.append(record)
     print(f"\nTm filter ({tm_min}-{tm_max}°C): rejected {tm_rejected}/{len(candidates)} probes")
-    print(f"Homopolymer filter (≥{metrics.max_homopolymer}bp runs): rejected {homopolymer_rejected}/{len(candidates)} probes")
-    print(f"Passed both filters: {len(passed)}/{len(candidates)} probes")
+    if skip_probe_generation:
+        print(f"Homopolymer (≥{metrics.max_homopolymer}bp runs): {homopolymer_rejected}/{len(candidates)} probes "
+              f"(reported only, not filtered)")
+        print(f"Retained {len(passed)}/{len(candidates)} probes")
+    else:
+        print(f"Homopolymer filter (≥{metrics.max_homopolymer}bp runs): rejected {homopolymer_rejected}/{len(candidates)} probes")
+        print(f"Passed both filters: {len(passed)}/{len(candidates)} probes")
     if len(passed) == 0:
         print("No probes passed Tm and homopolymer filters")
         return False
