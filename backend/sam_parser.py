@@ -55,16 +55,6 @@ def compute_alignment_diffs(cigar: str, md: str) -> tuple:
     return md_subs, indel_bases
 
 
-def compute_edit_distance(cigar: str, md: str) -> int:
-    """
-    Compute true alignment edit distance from CIGAR + MD.
-
-    Edit distance = #substitutions (from MD) + #inserted/deleted bases (from CIGAR).
-    """
-    md_subs, indel_bases = compute_alignment_diffs(cigar, md)
-    return md_subs + indel_bases
-
-
 def apply_mismatches_to_sequence(sequence: str, cigar: str, md: str, flag: int) -> str:
     """
     Apply mismatch highlighting to sequence.

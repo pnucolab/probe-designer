@@ -22,7 +22,6 @@ import subprocess
 import time
 import re
 import shlex
-import concurrent.futures
 from multiprocessing import cpu_count
 import sys
 from datetime import datetime
@@ -37,7 +36,7 @@ from probe_metrics_report import write_probe_metrics_report
 from probe_metrics import ProbeMetricsCalculator
 from probe_classifier import classify_probes_from_sam, infer_source_transcripts, resolve_source_from_header
 from host_internal_filter import filter_probes_by_self_alignment
-from backend.sam_parser import compute_edit_distance, compute_alignment_diffs
+from backend.sam_parser import compute_alignment_diffs
 import genome_stage
 
 
@@ -380,32 +379,6 @@ def validate_fasta_format(filepath):
         return False, f"File error: {e}", []
 
 
-def resolve_file_path(filename, file_type):
-    """Resolve file path: check if full path exists, otherwise search in default directory"""
-    if os.path.exists(filename):
-        return filename
-    
-    default_dir = DEFAULT_DIRS.get(file_type, '.')
-    default_path = os.path.join(default_dir, filename)
-    
-    if os.path.exists(default_path):
-        return default_path
-    
-    return None
-
-
-def detect_probe_length(sequences):
-    """Detect probe length from provided sequences. Returns length or None if inconsistent."""
-    lengths = set()
-    for _, seq in sequences:
-        lengths.add(len(seq))
-    
-    if len(lengths) == 1:
-        return lengths.pop()
-    else:
-        return None
-
-
 def run(cmd, description, check_output_file=None):
     """Run a command with logging and timing."""
     print(f"\n{description}")
@@ -607,28 +580,6 @@ def genome_kmer_counts(files, k, wanted_kmers, args, kmer_fasta, device=0,
     if not db_path:
         return None
     return query_jellyfish_db(db_path, kmer_fasta)
-
-
-def count_source_kmers(source_sequences, k):
-    """Count canonical k-mer occurrences in source sequences (matching Jellyfish -C behavior).
-    Each k-mer on either strand increments the count of its canonical form.
-    Returns counts keyed by BOTH the k-mer and its reverse complement for easy lookup.
-    """
-    canonical_counts = {}
-    for seq in source_sequences:
-        seq_upper = seq.upper()
-        for i in range(len(seq_upper) - k + 1):
-            kmer = seq_upper[i:i+k]
-            rc = str(Seq(kmer).reverse_complement())
-            canonical = min(kmer, rc)
-            canonical_counts[canonical] = canonical_counts.get(canonical, 0) + 1
-
-    counts = {}
-    for canonical, count in canonical_counts.items():
-        rc = str(Seq(canonical).reverse_complement())
-        counts[canonical] = count
-        counts[rc] = count
-    return counts
 
 
 def count_self_genome_kmer_hits(sequences, k, probe_kmers):
@@ -1232,7 +1183,6 @@ def main():
         gen_cmd = [
             sys.executable, os.path.join('core', 'generate_probes.py'),
             '--probe-length', str(args.probe_length),
-            '--max-mismatches', str(args.max_mismatches),
             '--min-gc', str(gc_min),
             '--max-gc', str(gc_max),
             '--input', input_fasta,
@@ -1632,14 +1582,5 @@ def main():
 if __name__ == '__main__':
     os.makedirs('core', exist_ok=True)
     os.makedirs(DEFAULT_DIRS['gene'], exist_ok=True)
-    
-    temp_file = None
-    if len(sys.argv) > 1:
-        parser = argparse.ArgumentParser()
-        parser.add_argument("--gene-sequence", "-gs")
-        parser.add_argument("--probe-sequence", "-ps")
-        temp_args, unknown = parser.parse_known_args()
-        if temp_args.gene_sequence or temp_args.probe_sequence:
-            pass
 
     main()

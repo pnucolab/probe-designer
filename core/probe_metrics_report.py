@@ -5,10 +5,6 @@ Measures each probe with ProbeMetricsCalculator and renders a fixed-width
 report. No probe is ranked or filtered here.
 """
 
-import csv
-import os
-import sys
-from typing import List, Dict
 from Bio import SeqIO
 from probe_metrics import ProbeMetricsCalculator
 
@@ -36,7 +32,6 @@ def write_probe_metrics_report(fasta_file: str, output_csv: str) -> int:
         na_concentration_mM=390.0,
         dnac1_nM=25.0,
         dnac2_nM=25.0,
-        target_tm=47.0,
         max_homopolymer=5,
         enable_hard_filters=True
     )

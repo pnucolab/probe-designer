@@ -26,9 +26,6 @@ class ProbeMetricsCalculator:
                  na_concentration_mM: float = 390.0,
                  dnac1_nM: float = 25.0,
                  dnac2_nM: float = 25.0,
-                 target_tm: float = 47.0,
-                 optimal_gc_range: tuple = (40, 60),
-                 optimal_length_range: tuple = (30, 37),
                  max_homopolymer: int = 5,
                  enable_hard_filters: bool = True):
         """
@@ -40,9 +37,6 @@ class ProbeMetricsCalculator:
             na_concentration_mM: Sodium concentration in mM (default 390)
             dnac1_nM: Concentration of higher concentration strand in nM (default 25)
             dnac2_nM: Concentration of lower concentration strand in nM (default 25)
-            target_tm: Target melting temperature (default 47°C)
-            optimal_gc_range: Optimal GC% range (default 40-60%)
-            optimal_length_range: Optimal probe length (default 30-37 nt)
             max_homopolymer: Maximum allowed homopolymer run (default 5)
         """
         self.T_celsius = temperature_celsius
@@ -50,9 +44,6 @@ class ProbeMetricsCalculator:
         self.na_conc_mM = na_concentration_mM
         self.dnac1 = dnac1_nM
         self.dnac2 = dnac2_nM
-        self.target_tm = target_tm
-        self.optimal_gc_range = optimal_gc_range
-        self.optimal_length_range = optimal_length_range
         self.max_homopolymer = max_homopolymer
         self.enable_hard_filters = enable_hard_filters
 
@@ -203,8 +194,3 @@ class ProbeMetricsCalculator:
             results.append(metrics)
 
         return results
-
-    def _reverse_complement(self, sequence: str) -> str:
-        """Get reverse complement of DNA sequence."""
-        complement = {'A': 'T', 'T': 'A', 'G': 'C', 'C': 'G', 'N': 'N'}
-        return ''.join(complement.get(base, 'N') for base in reversed(sequence))

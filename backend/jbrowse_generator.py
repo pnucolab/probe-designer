@@ -7,7 +7,7 @@ on the input gene sequence, colored by off-target risk from transcriptome alignm
 
 import re
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 import logging
 import sys
 import os
@@ -274,21 +274,6 @@ class JBrowseFileGenerator:
         
         logger.info(f"Generated: {gff3_path} with {len(probe_regions)} probes")
         return gff3_path
-    def filter_sam_for_reference(self, sam_path: Path, reference_id: str):
-        """Filter SAM to only include alignments to the reference sequence."""
-        filtered_sam = sam_path.with_name(sam_path.stem + "_ref_only.sam")
-        
-        with open(sam_path, 'r', encoding='utf-8') as infile, \
-             open(filtered_sam, 'w', encoding='utf-8') as outfile:
-            for line in infile:
-                if line.startswith('@'): 
-                    outfile.write(line)
-                else:  
-                    fields = line.split('\t')
-                    if len(fields) > 2 and fields[2] == reference_id:
-                        outfile.write(line)
-        
-        return filtered_sam
     def convert_sam_to_indexed_bam(self, sam_path: Path, skip_if_exists: bool = True):
         """
         Convert SAM to sorted, indexed BAM with improved error handling.

@@ -11,7 +11,6 @@ Supports two input scenarios:
 
 import os
 import json
-import shutil
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -21,7 +20,7 @@ import re
 from fastapi import FastAPI, HTTPException, Form, Request, Query, Response
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from .sam_parser import parse_sam_file, count_sam_alignments, same_genome
 from .celery_worker import celery_app, run_pipeline_task

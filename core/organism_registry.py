@@ -9,10 +9,9 @@ Add a new organism by editing the YAML — no code changes required.
 from __future__ import annotations
 
 import os
-import re
 import threading
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 import yaml
 
@@ -52,12 +51,6 @@ class Host:
     @property
     def has_genome(self) -> bool:
         return bool(self.genome_dir and self.genome_file_regex)
-
-    @property
-    def genome_file_pattern(self) -> Optional[re.Pattern]:
-        if not self.genome_file_regex:
-            return None
-        return re.compile(self.genome_file_regex)
 
 
 @dataclass(frozen=True)

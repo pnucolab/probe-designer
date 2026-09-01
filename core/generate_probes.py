@@ -3,7 +3,6 @@ from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
 import os
 import argparse
-import glob
 
 def calculate_gc_content(sequence):
     """Calculate GC content as percentage"""
@@ -59,10 +58,6 @@ if __name__ == "__main__":
                         help="Minimum GC content percentage (default: 40)")
     parser.add_argument("--max-gc", type=float, default=80,
                         help="Maximum GC content percentage (default: 80)")
-    parser.add_argument("--max-mismatches", type=int, default=2,
-                        help="Maximum number of mismatches allowed in alignments (default: 2)")
-    parser.add_argument("--species", default="human",
-                        help="Species name (default: human)")
     parser.add_argument("--input", default=None,
                         help="Input FASTA file (default: (required) provide --input or use pipeline to pass custom FASTA)")
     parser.add_argument("--output", default="output/candidate_probes.fa",

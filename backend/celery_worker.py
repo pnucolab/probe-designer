@@ -8,7 +8,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from celery import Celery
-from .jbrowse_generator import generate_jbrowse_files, JBrowseFileGenerator
+from .jbrowse_generator import generate_jbrowse_files
 
 logging.basicConfig(
     level=logging.INFO,
