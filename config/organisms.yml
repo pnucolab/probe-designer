@@ -197,3 +197,13 @@ hosts:
     transcript_chunks_dir: data/ensembl_data/soybean/transcript_chunks
     reference_url: https://plants.ensembl.org/Glycine_max/
     microbiomes: []
+  - id: custom-self
+    display_name: Custom Self Genome (MGYG000000001)
+    latin_binomial: null
+    ncbi_tax_id: null
+    transcript_id_prefixes: []
+    genome_dir: data/custom_self
+    genome_file_regex: 'MGYG(\d+)\.fa'
+    transcript_chunks_dir: data/custom_self
+    reference_url: null
+    microbiomes: []
