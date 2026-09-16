@@ -198,7 +198,7 @@ hosts:
     reference_url: https://plants.ensembl.org/Glycine_max/
     microbiomes: []
   - id: custom-self
-    display_name: Custom Self Genome (MGYG000000001)
+    display_name: Custom Self Genome (MGYG000000001) (for test only)
     latin_binomial: null
     ncbi_tax_id: null
     transcript_id_prefixes: []
