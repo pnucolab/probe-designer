@@ -50,11 +50,15 @@ class ProbeMetricsCalculator:
     def calculate_tm(self, sequence: str) -> float:
         """
         Calculate melting temperature using BioPython.
+
+        Returned unrounded. The Tm filter compares against this value
+        directly, so rounding here would widen the requested range by half a
+        display unit at each edge - a probe at 41.995 C would clear a 42 C
+        floor. Rounding belongs where the value is reported, not here.
         """
-        tmval = float(('%0.2f' % mt.Tm_NN(sequence, Na=self.na_conc_mM,
-                                          dnac1=self.dnac1, dnac2=self.dnac2)))
-        tm_corrected = float(('%0.2f' % mt.chem_correction(tmval, fmd=self.formamide)))
-        return tm_corrected
+        tmval = mt.Tm_NN(sequence, Na=self.na_conc_mM,
+                         dnac1=self.dnac1, dnac2=self.dnac2)
+        return mt.chem_correction(tmval, fmd=self.formamide)
 
     def calculate_gc_content(self, sequence: str) -> float:
         """
