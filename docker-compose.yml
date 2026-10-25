@@ -46,29 +46,12 @@ services:
       - internal_net
     command: celery -A backend.celery_worker worker --loglevel=info
     shm_size: '2gb'
-    # GPU access for the aligner + k-mer counting. Requires nvidia-container-toolkit
-    # on the host. Without this block the worker cannot see the GPU.
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-    # Explicit device entries are needed in addition to the `deploy` block above
-    # on hosts where the NVIDIA container runtime cannot program the device
-    # cgroup itself (for example when running with no-cgroups = true). On those
-    # hosts the runtime hook bind-mounts the driver but grants no access to the
-    # device nodes, and these entries are what make Docker emit the cgroup allow
-    # rules. Keep them alongside the `deploy` block, not instead of it.
-    #
-    # Set NVIDIA_DEVICE in a local .env file to match the GPU node your host
-    # exposes (e.g. NVIDIA_DEVICE=/dev/nvidia3); it defaults to /dev/nvidia0.
-    # Add one extra entry per additional GPU you want the worker to see.
+    # GPU access for the aligner + k-mer counting via CDI: the worker gets
+    # whatever GPU node(s) this host exposes, so no per-host device paths.
+    # Requires nvidia-container-toolkit and a CDI spec (nvidia-ctk cdi list);
+    # in an LXC guest nvidia-cdi-refresh needs an ExecCondition override.
     devices:
-      - ${NVIDIA_DEVICE:-/dev/nvidia0}:${NVIDIA_DEVICE:-/dev/nvidia0}
-      - /dev/nvidiactl:/dev/nvidiactl
-      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - nvidia.com/gpu=all
     restart: unless-stopped
 
   frontend:
